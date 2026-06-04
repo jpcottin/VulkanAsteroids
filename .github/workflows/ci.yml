@@ -74,20 +74,25 @@ jobs:
           disable-animations: true
           script: ./gradlew runNativeTests -PtestAbi=x86_64 --no-daemon
 
-  # ── Smoke test: install, launch, screenshot ───────────────────────────────────
+  # ── Smoke test: instrumented launch test + screenshot ─────────────────────────
   smoke:
     name: Smoke Test
     runs-on: ubuntu-latest
-    needs: build
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download APK
-        uses: actions/download-artifact@v8
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
         with:
-          name: debug-apk
-          path: apk
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Install NDK 29
+        run: |
+          echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;29.0.14206865" 2>&1 | tail -3
 
       - name: Enable KVM for hardware-accelerated emulator
         run: |
@@ -96,7 +101,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install, launch and screenshot
+      - name: Run instrumented smoke test and capture screenshot
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -105,11 +110,17 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            adb install apk/app-debug.apk
-            adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity
-            sleep 6
+            ./gradlew connectedAndroidTest --no-daemon
             adb exec-out screencap -p > screenshot.png
             adb logcat -d Asteroids:V AndroidRuntime:E *:S > logcat.txt
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-test-results
+          path: app/build/outputs/androidTest-results/
+          if-no-files-found: warn
 
       - name: Upload screenshot
         if: always()
