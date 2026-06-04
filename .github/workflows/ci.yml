@@ -111,6 +111,8 @@ jobs:
           disable-animations: true
           script: |
             ./gradlew connectedAndroidTest --no-daemon
+            adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity
+            sleep 5
             adb exec-out screencap -p > screenshot.png
             adb logcat -d Asteroids:V AndroidRuntime:E *:S > logcat.txt
 
