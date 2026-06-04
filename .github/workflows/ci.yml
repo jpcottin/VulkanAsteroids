@@ -73,3 +73,56 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: ./gradlew runNativeTests -PtestAbi=x86_64 --no-daemon
+
+  # ── Smoke test: install, launch, screenshot ───────────────────────────────────
+  smoke:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download APK
+        uses: actions/download-artifact@v8
+        with:
+          name: debug-apk
+          path: apk
+
+      - name: Enable KVM for hardware-accelerated emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install, launch and screenshot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: true
+          script: |
+            adb install apk/app-debug.apk
+            adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity
+            sleep 6
+            adb exec-out screencap -p > screenshot.png
+            adb logcat -d Asteroids:V AndroidRuntime:E *:S > logcat.txt
+
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-screenshot
+          path: screenshot.png
+          if-no-files-found: warn
+
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-logcat
+          path: logcat.txt
+          if-no-files-found: warn
