@@ -72,6 +72,7 @@ jobs:
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
+          emulator-boot-timeout: 900
           script: ./gradlew runNativeTests -PtestAbi=x86_64 --no-daemon
 
   # ── Smoke test: instrumented launch test + screenshot ─────────────────────────
@@ -109,6 +110,7 @@ jobs:
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
+          emulator-boot-timeout: 900
           script: |
             ./gradlew connectedAndroidTest --no-daemon
             adb pull /sdcard/Android/data/com.jpcottin.vulkanasteroids/files/smoke.png screenshot.png

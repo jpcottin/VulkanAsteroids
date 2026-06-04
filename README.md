@@ -18,13 +18,17 @@ Dodge and shoot asteroids across five increasingly difficult levels.
 - **Scoring:** +5×level per dodge, +10×level per kill, +100×level per cleared level.
 - **Lives:** 3 lives; invulnerability blinks after each hit.
 - **HUD:** score (top-left) · lives (top-center) · level (top-right).
+- **Ship banking:** the ship tilts ±20° into the direction of travel.
 
 ## Tech
 
 - **Pure native C++** — Android [`NativeActivity`](https://developer.android.com/ndk/reference/group/native-activity)
   with `native_app_glue`; no Kotlin, no Compose, no Java.
 - **Hand-written Vulkan 2D renderer** — one graphics pipeline, push-constant
-  transforms, flat-shaded primitives (triangle ship, 12-gon asteroids, quads).
+  transforms, flat-shaded primitives (9-vertex delta-wing ship, 12-gon asteroids, quads).
+- **Procedural audio via [Oboe](https://github.com/google/oboe)** — laser sweep,
+  explosion burst, hit thud, level-clear arpeggio, thrust rumble; all synthesised
+  at runtime, no audio files.
 - **GLSL → SPIR-V** compiled at build time with the NDK's `glslc`.
 - `minSdk 24` (Vulkan requires API 24+), AGP 9, NDK r29, CMake 3.22.
 
@@ -62,8 +66,8 @@ device or emulator:
 
 ### Instrumented smoke test
 
-Launches the `NativeActivity` on a connected device and asserts Vulkan
-initialises without crashing:
+Launches the `NativeActivity` on a connected device, waits 4 s for
+Vulkan to initialise, and asserts the activity is still `RESUMED`:
 
 ```bash
 ./gradlew connectedAndroidTest
@@ -71,13 +75,13 @@ initialises without crashing:
 
 ## CI/CD
 
-Three parallel GitHub Actions jobs run on every push and pull request to `main`:
+Three GitHub Actions jobs run on every push and pull request to `main`:
 
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs 15 Google Test cases on an API-34 x86_64 emulator | — |
-| **Smoke Test** | Runs the Android instrumented test, then captures a screenshot | `smoke-screenshot`, `smoke-test-results`, `smoke-logcat` |
+| **Native Tests** | Runs 15 Google Test cases on an API-34 x86\_64 emulator | — |
+| **Smoke Test** | Runs the Android instrumented test; captures an in-game screenshot via `UiAutomation` | `smoke-screenshot`, `smoke-test-results`, `smoke-logcat` |
 
 ## License
 
