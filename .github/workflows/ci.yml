@@ -113,7 +113,7 @@ jobs:
           emulator-boot-timeout: 900
           script: |
             ./gradlew connectedAndroidTest --no-daemon
-            adb pull /sdcard/smoke.png screenshot.png || true
+            adb pull /sdcard/Android/data/com.jpcottin.vulkanasteroids/files/smoke.png screenshot.png || true
             adb logcat -d Asteroids:V AndroidRuntime:E *:S > logcat.txt || true
 
       - name: Upload test results

@@ -29,17 +29,22 @@ class SmokeTest {
         // Give the native Vulkan renderer time to complete its first frame.
         Thread.sleep(4_000)
 
+        val state = activityRule.scenario.state
         assertEquals(
-            "NativeActivity should be RESUMED after Vulkan init",
+            "NativeActivity should be RESUMED after Vulkan init, but was $state",
             Lifecycle.State.RESUMED,
-            activityRule.scenario.state
+            state
         )
 
         // Capture a screenshot while the game is guaranteed to be in the foreground.
-        // Write to /sdcard/smoke.png — always accessible via `adb pull` in CI.
+        // Write to app-specific storage to avoid EPERM on API 30+.
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val screenshotFile = File(context.getExternalFilesDir(null), "smoke.png")
+
         val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        File("/sdcard/smoke.png").outputStream().use { stream ->
+        screenshotFile.outputStream().use { stream ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
         }
+        println("Screenshot saved to: ${screenshotFile.absolutePath}")
     }
 }

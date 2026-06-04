@@ -12,9 +12,17 @@ tasks.register("runNativeTests") {
         .file("intermediates/cmake/debug/obj/$abi/game_tests")
         .get().asFile.absolutePath
     doLast {
+        val binFile = File(binPath)
+        if (!binFile.exists()) {
+            throw GradleException("Native test binary not found at $binPath. " +
+                    "Ensure externalNativeBuildDebug has run for ABI $abi.")
+        }
         fun adb(vararg args: String) {
+            println("Executing: adb ${args.joinToString(" ")}")
             val rc = ProcessBuilder("adb", *args).inheritIO().start().waitFor()
-            check(rc == 0) { "adb ${args.toList()} exited $rc" }
+            if (rc != 0) {
+                throw GradleException("adb ${args.toList()} exited $rc")
+            }
         }
         adb("push", binPath, "/data/local/tmp/game_tests")
         adb("shell", "chmod", "+x", "/data/local/tmp/game_tests")
