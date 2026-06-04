@@ -1,11 +1,11 @@
 package com.jpcottin.vulkanasteroids
 
 import android.app.NativeActivity
-import android.graphics.Bitmap
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import android.graphics.Bitmap
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -36,11 +36,9 @@ class SmokeTest {
         )
 
         // Capture a screenshot while the game is guaranteed to be in the foreground.
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val bitmap = instrumentation.uiAutomation.takeScreenshot()
-        val outDir = instrumentation.targetContext.getExternalFilesDir(null)
-        outDir?.mkdirs()
-        File(outDir, "smoke.png").outputStream().use { stream ->
+        // Write to /sdcard/smoke.png — always accessible via `adb pull` in CI.
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        File("/sdcard/smoke.png").outputStream().use { stream ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
         }
     }
