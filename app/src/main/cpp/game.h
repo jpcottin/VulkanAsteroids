@@ -29,8 +29,9 @@ private:
         float cr, cg, cb;
         bool alive;
     };
+    struct Bullet { float x, y, vy, life; bool alive; };
     struct Star { float x, y, size; };
-    struct Pointer { bool active; float x; };
+    struct Pointer { bool active; float x, y; };
 
     // --- helpers ---
     float frand();
@@ -40,6 +41,8 @@ private:
     void spawnAsteroid(bool ambient);
     bool leftHeld() const;
     bool rightHeld() const;
+    bool thrustHeld() const;
+    bool fireHeld() const;
 
     // emit one shape: world centre (wx,wy), world half-extents (sx,sy), rotation, rgba.
     void emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
@@ -50,6 +53,15 @@ private:
                     float h, float r, float g, float b, float a);
     int numDigits(int v) const;
 
+    // --- test / debug accessors ---
+public:
+    float shipX() const { return shipX_; }
+    float shipY() const { return shipY_; }
+    int   bulletCount() const { return (int)bullets_.size(); }
+    long  score() const { return score_; }
+    int   lives() const { return lives_; }
+
+private:
     // --- viewport ---
     int vw_ = 1, vh_ = 1;
     float asp_ = 0.5f;
@@ -66,7 +78,9 @@ private:
 
     // --- ship ---
     float shipX_ = 0.0f;
-    const float shipY_ = 0.80f;
+    float shipY_ = 0.80f;
+    float shipVy_ = 0.0f;
+    float fireCooldown_ = 0.0f;
     const float shipScale_ = 0.075f;
     const float shipR_ = 0.058f;
     const float shipSpeed_ = 1.7f;
@@ -83,6 +97,7 @@ private:
     float fallSpeed_ = 0.5f;
 
     std::vector<Asteroid> asteroids_;
+    std::vector<Bullet> bullets_;
     std::vector<Star> stars_;
     uint32_t rng_ = 0x1234567u;
 };

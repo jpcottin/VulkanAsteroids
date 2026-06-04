@@ -7,7 +7,13 @@ static float levelFall(int L)   { return 0.50f + 0.13f * (clampLevel(L) - 1); }
 static float levelSpawn(int L)  { return 1.00f - 0.11f * (clampLevel(L) - 1); }
 static int   levelGoal(int L)   { return 10 + 2 * clampLevel(L); }
 
-static const float kStarSpeed = 0.18f;
+static const float kStarSpeed  = 0.18f;
+static const float kGravity    = 0.90f;   // ship falls at this acceleration
+static const float kThrustAcc  = 2.50f;   // upward acceleration when thrust held
+static const float kMaxShipVy  = 1.60f;
+static const float kBulletSpeed = 2.80f;
+static const float kFireCooldown = 0.22f;
+static const float kBulletLife  = 2.20f;
 
 // 7-segment masks for digits 0..9 (bit a=1,b=2,c=4,d=8,e=16,f=32,g=64).
 static const int kDigitSeg[10] = {63, 6, 91, 79, 102, 109, 125, 7, 127, 111};
@@ -40,21 +46,52 @@ void Game::setViewport(int w, int h) {
     if (shipX_ < -lim) shipX_ = -lim;
 }
 
+// --- input zone helpers ---
+// Bottom-left corner (x < 30%, y > 72%): THRUST
+// Bottom-right corner (x > 70%, y > 72%): FIRE
+// Left half excluding thrust zone: move left
+// Right half excluding fire zone: move right
+
 bool Game::leftHeld() const {
-    for (auto& p : pointers_) if (p.active && p.x < vw_ * 0.5f) return true;
+    for (auto& p : pointers_) {
+        if (!p.active || p.x >= vw_ * 0.5f) continue;
+        if (p.x < vw_ * 0.30f && p.y > vh_ * 0.72f) continue; // skip thrust zone
+        return true;
+    }
     return false;
 }
 bool Game::rightHeld() const {
-    for (auto& p : pointers_) if (p.active && p.x >= vw_ * 0.5f) return true;
+    for (auto& p : pointers_) {
+        if (!p.active || p.x < vw_ * 0.5f) continue;
+        if (p.x > vw_ * 0.70f && p.y > vh_ * 0.72f) continue; // skip fire zone
+        return true;
+    }
+    return false;
+}
+bool Game::thrustHeld() const {
+    for (auto& p : pointers_)
+        if (p.active && p.x < vw_ * 0.30f && p.y > vh_ * 0.72f) return true;
+    return false;
+}
+bool Game::fireHeld() const {
+    for (auto& p : pointers_)
+        if (p.active && p.x > vw_ * 0.70f && p.y > vh_ * 0.72f) return true;
     return false;
 }
 
 void Game::onPointerDown(int id, float x, float y) {
-    if (id >= 0 && id < kMaxPointers) { pointers_[id].active = true; pointers_[id].x = x; }
+    if (id >= 0 && id < kMaxPointers) {
+        pointers_[id].active = true;
+        pointers_[id].x = x;
+        pointers_[id].y = y;
+    }
     tapPending_ = true;
 }
 void Game::onPointerMove(int id, float x, float y) {
-    if (id >= 0 && id < kMaxPointers && pointers_[id].active) pointers_[id].x = x;
+    if (id >= 0 && id < kMaxPointers && pointers_[id].active) {
+        pointers_[id].x = x;
+        pointers_[id].y = y;
+    }
 }
 void Game::onPointerUp(int id) {
     if (id >= 0 && id < kMaxPointers) pointers_[id].active = false;
@@ -77,8 +114,12 @@ void Game::startLevel(int level) {
     dodgedThisLevel_ = 0;
     spawnTimer_ = 0.5f;
     shipX_ = 0.0f;
+    shipY_ = 0.80f;
+    shipVy_ = 0.0f;
+    fireCooldown_ = 0.0f;
     invuln_ = 1.2f;        // brief grace at level start
     asteroids_.clear();
+    bullets_.clear();
     state_ = PLAYING;
 }
 
@@ -123,11 +164,21 @@ void Game::update(float dt) {
             break;
         }
         case PLAYING: {
+            // Horizontal movement
             int dir = (rightHeld() ? 1 : 0) - (leftHeld() ? 1 : 0);
             shipX_ += dir * shipSpeed_ * dt;
             float lim = asp_ - shipScale_;
             if (shipX_ > lim) shipX_ = lim;
             if (shipX_ < -lim) shipX_ = -lim;
+
+            // Vertical thrust / gravity
+            float acc = thrustHeld() ? -kThrustAcc : kGravity;
+            shipVy_ += acc * dt;
+            if (shipVy_ >  kMaxShipVy) shipVy_ =  kMaxShipVy;
+            if (shipVy_ < -kMaxShipVy) shipVy_ = -kMaxShipVy;
+            shipY_ += shipVy_ * dt;
+            if (shipY_ > 0.92f) { shipY_ = 0.92f; if (shipVy_ > 0) shipVy_ = 0; }
+            if (shipY_ < 0.12f) { shipY_ = 0.12f; if (shipVy_ < 0) shipVy_ = 0; }
 
             if (invuln_ > 0.0f) invuln_ -= dt;
 
@@ -137,6 +188,7 @@ void Game::update(float dt) {
                 spawnTimer_ = spawnInterval_ * frange(0.8f, 1.2f);
             }
 
+            // Asteroid movement and ship collision
             for (auto& a : asteroids_) {
                 a.y += a.vy * dt;
                 a.rot += a.spin * dt;
@@ -156,14 +208,49 @@ void Game::update(float dt) {
                     score_ += 5 * level_;
                 }
             }
+
+            // Fire and bullet update
+            if (fireCooldown_ > 0.0f) fireCooldown_ -= dt;
+            if (fireHeld() && fireCooldown_ <= 0.0f) {
+                Bullet b;
+                b.x = shipX_;
+                b.y = shipY_ - shipScale_ * 1.1f;
+                b.vy = -kBulletSpeed;
+                b.life = kBulletLife;
+                b.alive = true;
+                bullets_.push_back(b);
+                fireCooldown_ = kFireCooldown;
+            }
+            for (auto& b : bullets_) {
+                if (!b.alive) continue;
+                b.y += b.vy * dt;
+                b.life -= dt;
+                if (b.y < -1.15f || b.life <= 0.0f) { b.alive = false; continue; }
+                for (auto& a : asteroids_) {
+                    if (!a.alive) continue;
+                    float dx = b.x - a.x, dy = b.y - a.y;
+                    if (dx * dx + dy * dy < (a.r + 0.012f) * (a.r + 0.012f)) {
+                        b.alive = false;
+                        a.alive = false;
+                        score_ += 10 * level_;
+                        dodgedThisLevel_++;
+                        break;
+                    }
+                }
+            }
+
+            // Cleanup
             for (size_t i = asteroids_.size(); i-- > 0;)
                 if (!asteroids_[i].alive) asteroids_.erase(asteroids_.begin() + i);
+            for (size_t i = bullets_.size(); i-- > 0;)
+                if (!bullets_[i].alive) bullets_.erase(bullets_.begin() + i);
 
             if (state_ == PLAYING && dodgedThisLevel_ >= goal_) {
                 score_ += 100 * level_;
                 state_ = LEVEL_CLEAR;
                 stateTimer_ = 0.0f;
                 asteroids_.clear();
+                bullets_.clear();
             }
             break;
         }
@@ -265,6 +352,10 @@ void Game::render(std::vector<DrawCmd>& out) {
     for (auto& a : asteroids_)
         emit(out, SHAPE_ASTEROID, a.x, a.y, a.r, a.r, a.rot, a.cr, a.cg, a.cb, 1.0f);
 
+    // bullets
+    for (auto& b : bullets_)
+        emit(out, SHAPE_QUAD, b.x, b.y, 0.011f, 0.028f, 0.0f, 1.0f, 1.0f, 0.55f, 1.0f);
+
     // ship (PLAYING + TITLE). Blink while invulnerable.
     bool showShip = (state_ == PLAYING || state_ == TITLE);
     bool blinkOn = invuln_ <= 0.0f || fmodf(animTime_ * 12.0f, 1.0f) < 0.6f;
@@ -290,6 +381,21 @@ void Game::render(std::vector<DrawCmd>& out) {
         for (int i = 0; i < lives_; i++)
             emit(out, SHAPE_SHIP, startX + i * gap, -0.90f, ls, ls, 0.0f,
                  0.45f, 0.9f, 1.0f, 1.0f);
+    }
+
+    // Touch button zones (only during active gameplay)
+    if (state_ == PLAYING) {
+        bool th = thrustHeld(), fh = fireHeld();
+        // Thrust zone: bottom-left corner
+        emit(out, SHAPE_QUAD, -asp_ * 0.70f, 0.72f, asp_ * 0.30f, 0.28f, 0.0f,
+             0.30f, 0.60f, 1.00f, th ? 0.22f : 0.08f);
+        emit(out, SHAPE_SHIP, -asp_ * 0.70f, 0.72f, 0.035f, 0.035f, 0.0f,
+             0.40f, 0.80f, 1.00f, th ? 1.00f : 0.40f);
+        // Fire zone: bottom-right corner
+        emit(out, SHAPE_QUAD, asp_ * 0.70f, 0.72f, asp_ * 0.30f, 0.28f, 0.0f,
+             1.00f, 0.40f, 0.20f, fh ? 0.22f : 0.08f);
+        emit(out, SHAPE_QUAD, asp_ * 0.70f, 0.72f, 0.011f, 0.030f, 0.0f,
+             1.00f, 0.90f, 0.40f, fh ? 1.00f : 0.45f);
     }
 
     float pulse = 0.5f + 0.5f * sinf(animTime_ * 4.0f);
