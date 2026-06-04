@@ -35,12 +35,6 @@ adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity
 
 Runs on any physical device with a Vulkan driver (API 24+).
 
-> **Emulator note:** guest Vulkan does not work on every AVD. An API 30 image
-> launched with the Vulkan feature enabled works well:
-> ```bash
-> emulator -avd <api30_avd> -gpu host -feature Vulkan,GLDirectMem
-> ```
-
 ## License
 
 [Apache License 2.0](LICENSE).
