@@ -6,11 +6,13 @@
 #include "common.h"
 #include "vk_renderer.h"
 #include "game.h"
+#include "audio.h"
 
 struct Engine {
     android_app* app = nullptr;
-    VkRenderer renderer;
-    Game game;
+    VkRenderer   renderer;
+    Game         game;
+    AudioEngine  audio;
     bool instanceReady = false;
     double lastTime = 0.0;
 };
@@ -27,10 +29,14 @@ static void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_INIT_WINDOW:
             if (app->window && e->instanceReady) {
                 e->renderer.initWindow(app->window);
+                e->audio.init();
+                e->game.setAudioEngine(&e->audio);
                 e->lastTime = now_s();
             }
             break;
         case APP_CMD_TERM_WINDOW:
+            e->game.setAudioEngine(nullptr);
+            e->audio.shutdown();
             e->renderer.termWindow();
             break;
         default:

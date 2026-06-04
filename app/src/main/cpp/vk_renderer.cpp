@@ -136,12 +136,20 @@ bool VkRenderer::createVertexBuffer() {
     std::vector<float> v;  // interleaved x,y
     auto push = [&](float x, float y) { v.push_back(x); v.push_back(y); };
 
-    // SHIP: triangle, nose pointing up (-y is up on screen).
+    // SHIP: delta-wing fighter, nose pointing up.  9-vertex polygon as a
+    // triangle fan from centre (0, 0.18).  Matches the launcher icon silhouette.
+    //   p0 nose, p1..p4 left side, p5..p8 right side (CCW in screen space).
+    const float cx = 0.0f, cy = 0.18f;
+    const float sx[9] = { 0.00f, -0.10f, -1.00f, -0.32f, -0.10f,
+                           0.10f,  0.32f,  1.00f,  0.10f };
+    const float sy[9] = {-1.00f, -0.35f,  0.28f,  0.72f,  0.95f,
+                           0.95f,  0.72f,  0.28f, -0.35f };
     shapeFirst_[SHAPE_SHIP] = 0;
-    push(0.0f, -1.0f);
-    push(-0.72f, 0.85f);
-    push(0.72f, 0.85f);
-    shapeCount_[SHAPE_SHIP] = 3;
+    for (int i = 0; i < 9; i++) {
+        int j = (i + 1) % 9;
+        push(cx, cy); push(sx[i], sy[i]); push(sx[j], sy[j]);
+    }
+    shapeCount_[SHAPE_SHIP] = 9 * 3;
 
     // ASTEROID: irregular filled 12-gon (triangle fan flattened to a list).
     const int N = 12;

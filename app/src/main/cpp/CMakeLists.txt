@@ -34,11 +34,20 @@ add_library(native_app_glue STATIC
 target_include_directories(native_app_glue PUBLIC
     "${ANDROID_NDK}/sources/android/native_app_glue")
 
+# --- Oboe audio library (auto-selects AAudio on API 26+, OpenSL ES below) ---
+include(FetchContent)
+FetchContent_Declare(oboe
+    GIT_REPOSITORY https://github.com/google/oboe.git
+    GIT_TAG        1.9.3
+    GIT_SHALLOW    TRUE)
+FetchContent_MakeAvailable(oboe)
+
 # --- The game library (loaded by NativeActivity as libasteroids.so) ---
 add_library(asteroids SHARED
     main.cpp
     vk_renderer.cpp
-    game.cpp)
+    game.cpp
+    audio.cpp)
 
 add_dependencies(asteroids shaders)
 target_include_directories(asteroids PRIVATE "${GEN_DIR}")
@@ -47,6 +56,7 @@ target_include_directories(asteroids PRIVATE "${GEN_DIR}")
 target_link_options(asteroids PRIVATE "-u" "ANativeActivity_onCreate")
 
 target_link_libraries(asteroids
+    oboe
     native_app_glue
     vulkan
     android
@@ -63,6 +73,7 @@ target_include_directories(gtest PUBLIC  "${GTEST_ROOT}/include"
 
 add_executable(game_tests
     test/game_test.cpp
+    test/audio_stub.cpp
     game.cpp)
 target_include_directories(game_tests PRIVATE
     "${GTEST_ROOT}/include"

@@ -1,4 +1,5 @@
 #include "game.h"
+#include "audio.h"
 #include <cmath>
 
 // ---- level tuning (1..5, very easy -> hard) ----
@@ -116,6 +117,7 @@ void Game::startLevel(int level) {
     shipX_ = 0.0f;
     shipY_ = 0.80f;
     shipVy_ = 0.0f;
+    shipTilt_ = 0.0f;
     fireCooldown_ = 0.0f;
     invuln_ = 1.2f;        // brief grace at level start
     asteroids_.clear();
@@ -164,12 +166,18 @@ void Game::update(float dt) {
             break;
         }
         case PLAYING: {
-            // Horizontal movement
+            // Audio: sync thrust sound each frame
+            if (audio_) audio_->setThrust(thrustHeld());
+
+            // Horizontal movement + tilt
             int dir = (rightHeld() ? 1 : 0) - (leftHeld() ? 1 : 0);
             shipX_ += dir * shipSpeed_ * dt;
             float lim = asp_ - shipScale_;
             if (shipX_ > lim) shipX_ = lim;
             if (shipX_ < -lim) shipX_ = -lim;
+            // Smoothly lean into direction of travel (±20°)
+            float tiltTarget = dir * 0.35f;
+            shipTilt_ += (tiltTarget - shipTilt_) * 9.0f * dt;
 
             // Vertical thrust / gravity
             float acc = thrustHeld() ? -kThrustAcc : kGravity;
@@ -199,6 +207,7 @@ void Game::update(float dt) {
                         a.alive = false;
                         lives_--;
                         invuln_ = 1.5f;
+                        if (audio_) audio_->triggerPlayerHit();
                         if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; }
                     }
                 }
@@ -220,6 +229,7 @@ void Game::update(float dt) {
                 b.alive = true;
                 bullets_.push_back(b);
                 fireCooldown_ = kFireCooldown;
+                if (audio_) audio_->triggerLaser();
             }
             for (auto& b : bullets_) {
                 if (!b.alive) continue;
@@ -234,6 +244,7 @@ void Game::update(float dt) {
                         a.alive = false;
                         score_ += 10 * level_;
                         dodgedThisLevel_++;
+                        if (audio_) audio_->triggerExplosion();
                         break;
                     }
                 }
@@ -248,6 +259,7 @@ void Game::update(float dt) {
             if (state_ == PLAYING && dodgedThisLevel_ >= goal_) {
                 score_ += 100 * level_;
                 state_ = LEVEL_CLEAR;
+                if (audio_) audio_->triggerLevelClear();
                 stateTimer_ = 0.0f;
                 asteroids_.clear();
                 bullets_.clear();
@@ -361,7 +373,22 @@ void Game::render(std::vector<DrawCmd>& out) {
     bool blinkOn = invuln_ <= 0.0f || fmodf(animTime_ * 12.0f, 1.0f) < 0.6f;
     if (showShip && blinkOn) {
         float bob = (state_ == TITLE) ? 0.02f * sinf(animTime_ * 2.0f) : 0.0f;
-        emit(out, SHAPE_SHIP, shipX_, shipY_ + bob, shipScale_, shipScale_, 0.0f,
+        float tilt = (state_ == TITLE) ? 0.0f : shipTilt_;
+
+        // Engine exhaust flame — drawn first so it appears behind the hull.
+        // Position: bottom-centre of ship in local space ≈ (0, 0.88), rotated by tilt.
+        bool thrusting = (state_ == PLAYING) && thrustHeld();
+        float flicker = sinf(animTime_ * 31.0f) * sinf(animTime_ * 47.0f);
+        float flameH = shipScale_ * (thrusting ? (0.48f + 0.06f * flicker) : 0.28f);
+        float flameW = flameH * 0.55f;
+        float ex = shipX_ + sinf(tilt) * shipScale_ * 0.88f;
+        float ey = shipY_ + bob + cosf(tilt) * shipScale_ * 0.88f;
+        float fg = thrusting ? (0.55f + 0.12f * flicker) : 0.40f;
+        emit(out, SHAPE_SHIP, ex, ey, flameW, flameH,
+             3.14159265f + tilt, 1.0f, fg, 0.05f, 0.88f);
+
+        // Hull
+        emit(out, SHAPE_SHIP, shipX_, shipY_ + bob, shipScale_, shipScale_, tilt,
              0.45f, 0.9f, 1.0f, 1.0f);
     }
 

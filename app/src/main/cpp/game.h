@@ -2,6 +2,8 @@
 #include <vector>
 #include "common.h"
 
+class AudioEngine;
+
 // All gameplay: ship, asteroids, 5 progressing levels, score, lives, HUD.
 // World coordinates: x in [-asp, asp], y in [-1, 1], y pointing DOWN (so asteroids
 // fall from -y toward +y). asp = width/height. The renderer divides x by asp, so
@@ -53,6 +55,11 @@ private:
                     float h, float r, float g, float b, float a);
     int numDigits(int v) const;
 
+    // --- audio ---
+    AudioEngine* audio_ = nullptr;
+public:
+    void setAudioEngine(AudioEngine* a) { audio_ = a; }
+
     // --- test / debug accessors ---
 public:
     float shipX() const { return shipX_; }
@@ -80,6 +87,7 @@ private:
     float shipX_ = 0.0f;
     float shipY_ = 0.80f;
     float shipVy_ = 0.0f;
+    float shipTilt_ = 0.0f;
     float fireCooldown_ = 0.0f;
     const float shipScale_ = 0.075f;
     const float shipR_ = 0.058f;
