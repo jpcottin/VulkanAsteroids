@@ -6,9 +6,10 @@ plugins {
 // Usage: ./gradlew runNativeTests
 tasks.register("runNativeTests") {
     dependsOn("externalNativeBuildDebug")
-    // Evaluate path at configuration time so the config cache can serialise it.
+    // ABI defaults to arm64-v8a (local device); override with -PtestAbi=x86_64 for CI.
+    val abi = (project.findProperty("testAbi") as String?) ?: "arm64-v8a"
     val binPath = layout.buildDirectory
-        .file("intermediates/cmake/debug/obj/arm64-v8a/game_tests")
+        .file("intermediates/cmake/debug/obj/$abi/game_tests")
         .get().asFile.absolutePath
     doLast {
         fun adb(vararg args: String) {
