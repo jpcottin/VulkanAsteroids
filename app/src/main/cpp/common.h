@@ -12,6 +12,9 @@ enum Shape {
     SHAPE_SHIP = 0,
     SHAPE_ASTEROID = 1,
     SHAPE_QUAD = 2,
+    SHAPE_SHIP_WINGS = 3,   // wide swept wings layer (dark blue-gray)
+    SHAPE_SHIP_BODY  = 4,   // narrow fuselage layer (bright cyan)
+    SHAPE_SHIP_NOSE  = 5,   // sharp nose spike layer (white)
     SHAPE_COUNT
 };
 

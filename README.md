@@ -26,9 +26,12 @@ Dodge and shoot asteroids across five increasingly difficult levels.
 - **Pure native C++** — Android [`NativeActivity`](https://developer.android.com/ndk/reference/group/native-activity)
   with `native_app_glue`; no Kotlin, no Compose, no Java.
 - **Hand-written Vulkan 2D renderer** — one graphics pipeline, push-constant
-  transforms, flat-shaded primitives (9-vertex delta-wing ship, 12-gon asteroids, quads).
-  Asteroid destruction spawns a visual explosion: expanding flash ring + 10 debris
-  fragments with drag and spin. Ship collision also triggers a cyan impact flash.
+  transforms, flat-shaded primitives. Ship rendered as three layered shapes (dark
+  blue-gray swept wings, bright cyan fuselage, white nose spike) matching the app
+  icon style. Asteroids use a 32-vertex irregular polygon with aggressive radius
+  variation for a jagged rocky surface. Asteroid destruction spawns a visual
+  explosion: expanding flash ring + 10 debris fragments with drag and spin. Ship
+  collision also triggers a cyan impact flash.
 - **Procedural audio via [Oboe](https://github.com/google/oboe)** — laser sweep,
   explosion burst, hit thud, level-clear arpeggio, thrust rumble; all synthesised
   at runtime, no audio files.

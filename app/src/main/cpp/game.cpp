@@ -515,20 +515,26 @@ void Game::render(std::vector<DrawCmd>& out) {
         float tilt = (state_ == TITLE) ? 0.0f : shipTilt_;
 
         // Engine exhaust flame — drawn first so it appears behind the hull.
-        // Position: bottom-centre of ship in local space ≈ (0, 0.88), rotated by tilt.
         bool thrusting = (state_ == PLAYING) && thrustHeld();
         float flicker = sinf(animTime_ * 31.0f) * sinf(animTime_ * 47.0f);
-        float flameH = shipScale_ * (thrusting ? (0.48f + 0.06f * flicker) : 0.28f);
-        float flameW = flameH * 0.55f;
+        float flameH = shipScale_ * (thrusting ? (0.55f + 0.08f * flicker) : 0.30f);
+        float flameW = flameH * 0.45f;
         float ex = shipX_ + sinf(tilt) * shipScale_ * 0.88f;
         float ey = shipY_ + bob + cosf(tilt) * shipScale_ * 0.88f;
-        float fg = thrusting ? (0.55f + 0.12f * flicker) : 0.40f;
-        emit(out, SHAPE_SHIP, ex, ey, flameW, flameH,
-             3.14159265f + tilt, 1.0f, fg, 0.05f, 0.88f);
+        float fg = thrusting ? (0.65f + 0.15f * flicker) : 0.45f;
+        emit(out, SHAPE_SHIP_NOSE, ex, ey, flameW, flameH,
+             3.14159265f + tilt, 1.0f, fg, 0.08f, 0.0f);
 
-        // Hull
-        emit(out, SHAPE_SHIP, shipX_, shipY_ + bob, shipScale_, shipScale_, tilt,
-             0.45f, 0.9f, 1.0f, 1.0f);
+        // Hull — three layers matching the app icon style:
+        // 1. Wide dark blue-gray wings (back)
+        emit(out, SHAPE_SHIP_WINGS, shipX_, shipY_ + bob, shipScale_, shipScale_, tilt,
+             0.22f, 0.42f, 0.65f, 1.0f);
+        // 2. Narrow bright cyan fuselage (middle)
+        emit(out, SHAPE_SHIP_BODY, shipX_, shipY_ + bob, shipScale_, shipScale_, tilt,
+             0.28f, 0.72f, 0.92f, 1.0f);
+        // 3. Bright white nose spike (front)
+        emit(out, SHAPE_SHIP_NOSE, shipX_, shipY_ + bob, shipScale_, shipScale_, tilt,
+             0.88f, 0.97f, 1.00f, 1.0f);
     }
 
     // HUD during gameplay
@@ -544,9 +550,12 @@ void Game::render(std::vector<DrawCmd>& out) {
         // lives as small ship icons, top-center
         float ls = 0.03f, gap = 0.085f;
         float startX = -(lives_ - 1) * gap * 0.5f;
-        for (int i = 0; i < lives_; i++)
-            emit(out, SHAPE_SHIP, startX + i * gap, -0.90f, ls, ls, 0.0f,
-                 0.45f, 0.9f, 1.0f, 1.0f);
+        for (int i = 0; i < lives_; i++) {
+            emit(out, SHAPE_SHIP_WINGS, startX + i * gap, -0.90f, ls, ls, 0.0f,
+                 0.22f, 0.42f, 0.65f, 1.0f);
+            emit(out, SHAPE_SHIP_BODY,  startX + i * gap, -0.90f, ls, ls, 0.0f,
+                 0.28f, 0.72f, 0.92f, 1.0f);
+        }
     }
 
     // Touch button zones (only during active gameplay)
@@ -555,8 +564,10 @@ void Game::render(std::vector<DrawCmd>& out) {
         // Thrust zone: bottom-left corner
         emit(out, SHAPE_QUAD, -asp_ * 0.70f, 0.72f, asp_ * 0.30f, 0.28f, 0.0f,
              0.30f, 0.60f, 1.00f, th ? 0.22f : 0.08f);
-        emit(out, SHAPE_SHIP, -asp_ * 0.70f, 0.72f, 0.035f, 0.035f, 0.0f,
-             0.40f, 0.80f, 1.00f, th ? 1.00f : 0.40f);
+        emit(out, SHAPE_SHIP_WINGS, -asp_ * 0.70f, 0.72f, 0.035f, 0.035f, 0.0f,
+             0.22f, 0.42f, 0.65f, th ? 1.00f : 0.40f);
+        emit(out, SHAPE_SHIP_BODY,  -asp_ * 0.70f, 0.72f, 0.035f, 0.035f, 0.0f,
+             0.28f, 0.72f, 0.92f, th ? 1.00f : 0.40f);
         // Fire zone: bottom-right corner
         emit(out, SHAPE_QUAD, asp_ * 0.70f, 0.72f, asp_ * 0.30f, 0.28f, 0.0f,
              1.00f, 0.40f, 0.20f, fh ? 0.22f : 0.08f);
@@ -567,9 +578,13 @@ void Game::render(std::vector<DrawCmd>& out) {
     float pulse = 0.5f + 0.5f * sinf(animTime_ * 4.0f);
 
     if (state_ == TITLE) {
-        // big title ship
-        emit(out, SHAPE_SHIP, 0.0f, -0.15f, 0.22f, 0.22f, 0.0f,
-             0.5f, 0.95f, 1.0f, 1.0f);
+        // big title ship — three layers
+        emit(out, SHAPE_SHIP_WINGS, 0.0f, -0.15f, 0.22f, 0.22f, 0.0f,
+             0.22f, 0.42f, 0.65f, 1.0f);
+        emit(out, SHAPE_SHIP_BODY,  0.0f, -0.15f, 0.22f, 0.22f, 0.0f,
+             0.28f, 0.72f, 0.92f, 1.0f);
+        emit(out, SHAPE_SHIP_NOSE,  0.0f, -0.15f, 0.22f, 0.22f, 0.0f,
+             0.88f, 0.97f, 1.00f, 1.0f);
 
         // High score podium (top 3, gold/silver/bronze)
         static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
@@ -580,7 +595,8 @@ void Game::render(std::vector<DrawCmd>& out) {
             if (highScores_[i].score <= 0) break;
             float pr = kPodR[i], pg = kPodG[i], pb = kPodB[i];
             // Rank ship icon
-            emit(out, SHAPE_SHIP, -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr, pg, pb, 1.0f);
+            emit(out, SHAPE_SHIP_WINGS, -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr*0.5f, pg*0.5f, pb*0.5f, 1.0f);
+            emit(out, SHAPE_SHIP_BODY,  -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr,      pg,      pb,      1.0f);
             // Score
             drawNumber(out, (int)highScores_[i].score, -asp_*0.50f, rowY[i], hh, pr, pg, pb, 1.0f);
             // Level digit (right-aligned)
@@ -589,8 +605,10 @@ void Game::render(std::vector<DrawCmd>& out) {
 
         // pulsing tap hint
         float s = 0.05f + 0.015f * pulse;
-        emit(out, SHAPE_SHIP, 0.0f, 0.45f, s, s, 0.0f,
-             1.0f, 1.0f, 1.0f, 0.4f + 0.6f * pulse);
+        emit(out, SHAPE_SHIP_WINGS, 0.0f, 0.45f, s, s, 0.0f,
+             0.22f, 0.42f, 0.65f, 0.4f + 0.6f * pulse);
+        emit(out, SHAPE_SHIP_BODY,  0.0f, 0.45f, s, s, 0.0f,
+             0.28f, 0.72f, 0.92f, 0.4f + 0.6f * pulse);
     } else if (state_ == LEVEL_CLEAR) {
         // big green level number just cleared
         drawNumber(out, level_, 0.0f, -0.05f, 0.42f, 0.4f, 1.0f, 0.5f, 1.0f);
@@ -612,8 +630,10 @@ void Game::render(std::vector<DrawCmd>& out) {
             drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
                       kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
         }
-        emit(out, SHAPE_SHIP, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
-             1.0f, 1.0f, 1.0f, 0.3f + 0.6f * pulse);
+        emit(out, SHAPE_SHIP_WINGS, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
+             0.22f, 0.42f, 0.65f, 0.3f + 0.6f * pulse);
+        emit(out, SHAPE_SHIP_BODY,  0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
+             0.28f, 0.72f, 0.92f, 0.3f + 0.6f * pulse);
     } else if (state_ == WIN) {
         emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
              0.1f, 0.5f, 0.15f, 0.30f + 0.10f * pulse);
@@ -630,8 +650,10 @@ void Game::render(std::vector<DrawCmd>& out) {
             drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
                       kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
         }
-        emit(out, SHAPE_SHIP, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
-             1.0f, 1.0f, 1.0f, 0.3f + 0.6f * pulse);
+        emit(out, SHAPE_SHIP_WINGS, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
+             0.22f, 0.42f, 0.65f, 0.3f + 0.6f * pulse);
+        emit(out, SHAPE_SHIP_BODY,  0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
+             0.28f, 0.72f, 0.92f, 0.3f + 0.6f * pulse);
     }
 }
 

@@ -136,8 +136,8 @@ bool VkRenderer::createVertexBuffer() {
     std::vector<float> v;  // interleaved x,y
     auto push = [&](float x, float y) { v.push_back(x); v.push_back(y); };
 
-    // SHIP: delta-wing fighter, nose pointing up.  9-vertex polygon as a
-    // triangle fan from centre (0, 0.18).  Matches the launcher icon silhouette.
+    // SHIP: delta-wing fighter, nose pointing up. 9-vertex polygon as a
+    // triangle fan from centre (0, 0.18). Matches the launcher icon silhouette.
     //   p0 nose, p1..p4 left side, p5..p8 right side (CCW in screen space).
     const float cx = 0.0f, cy = 0.18f;
     const float sx[9] = { 0.00f, -0.10f, -1.00f, -0.32f, -0.10f,
@@ -151,14 +151,18 @@ bool VkRenderer::createVertexBuffer() {
     }
     shapeCount_[SHAPE_SHIP] = 9 * 3;
 
-    // ASTEROID: irregular filled 12-gon (triangle fan flattened to a list).
-    const int N = 12;
-    const float radii[N] = {1.0f, 0.84f, 0.97f, 0.80f, 0.95f, 0.88f,
-                            1.0f, 0.82f, 0.96f, 0.86f, 1.0f,  0.83f};
+    // ASTEROID: rugged 32-vertex polygon with aggressive radius variation for rocky surface.
+    const int N = 32;
+    const float radii[N] = {
+        1.0f, 0.62f, 0.91f, 0.58f, 0.88f, 0.65f, 0.95f, 0.52f,
+        1.0f, 0.68f, 0.92f, 0.55f, 0.87f, 0.70f, 0.94f, 0.51f,
+        1.0f, 0.60f, 0.89f, 0.59f, 0.86f, 0.66f, 0.96f, 0.53f,
+        1.0f, 0.67f, 0.90f, 0.57f, 0.85f, 0.69f, 0.93f, 0.54f
+    };
     shapeFirst_[SHAPE_ASTEROID] = (uint32_t)(v.size() / 2);
     for (int i = 0; i < N; i++) {
         float a0 = (float)(2.0 * M_PI * i / N);
-        float a1 = (float)(2.0 * M_PI * (i + 1) / N);
+        float a1 = (float)(2.0 * M_PI * ((i + 1) % N) / N);
         float r0 = radii[i];
         float r1 = radii[(i + 1) % N];
         push(0.0f, 0.0f);
@@ -172,6 +176,25 @@ bool VkRenderer::createVertexBuffer() {
     push(-1, -1); push(1, -1); push(1, 1);
     push(-1, -1); push(1, 1); push(-1, 1);
     shapeCount_[SHAPE_QUAD] = 6;
+
+    // SHIP_WINGS: wide swept wings — dark steel-blue layer behind the body.
+    shapeFirst_[SHAPE_SHIP_WINGS] = (uint32_t)(v.size() / 2);
+    push( 0.00f, -0.50f); push(-1.00f,  0.20f); push(-0.28f,  0.95f);
+    push( 0.00f, -0.50f); push( 0.28f,  0.95f); push( 1.00f,  0.20f);
+    push( 0.00f, -0.50f); push(-0.28f,  0.95f); push( 0.28f,  0.95f);
+    shapeCount_[SHAPE_SHIP_WINGS] = 9;
+
+    // SHIP_BODY: narrow tall fuselage — bright cyan central layer.
+    shapeFirst_[SHAPE_SHIP_BODY] = (uint32_t)(v.size() / 2);
+    push( 0.00f, -1.00f); push(-0.22f, -0.30f); push( 0.22f, -0.30f);
+    push(-0.22f, -0.30f); push(-0.18f,  0.90f); push( 0.18f,  0.90f);
+    push(-0.22f, -0.30f); push( 0.18f,  0.90f); push( 0.22f, -0.30f);
+    shapeCount_[SHAPE_SHIP_BODY] = 9;
+
+    // SHIP_NOSE: bright white narrow spike at the very tip.
+    shapeFirst_[SHAPE_SHIP_NOSE] = (uint32_t)(v.size() / 2);
+    push( 0.00f, -1.00f); push(-0.07f, -0.55f); push( 0.07f, -0.55f);
+    shapeCount_[SHAPE_SHIP_NOSE] = 3;
 
     VkDeviceSize size = v.size() * sizeof(float);
     VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
