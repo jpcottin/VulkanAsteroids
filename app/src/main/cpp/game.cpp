@@ -143,6 +143,37 @@ void Game::saveHighScores() {
     fclose(f);
 }
 
+void Game::spawnDebris(float ax, float ay, float ar, float cr, float cg, float cb) {
+    // Expanding flash ring
+    Explosion e;
+    e.x = ax; e.y = ay; e.radius = ar;
+    e.t = 0.0f; e.maxLife = 0.22f;
+    e.cr = cr; e.cg = cg; e.cb = cb;
+    e.alive = true;
+    explosions_.push_back(e);
+
+    // 10 debris fragments flying outward
+    for (int i = 0; i < 10; i++) {
+        float angle = frange(0.0f, 6.2832f);
+        float speed = frange(0.5f, 1.6f);
+        Particle p;
+        p.x = ax + cosf(angle) * ar * 0.4f;
+        p.y = ay + sinf(angle) * ar * 0.4f;
+        p.vx = cosf(angle) * speed;
+        p.vy = sinf(angle) * speed;
+        p.rot  = frange(0.0f, 6.2832f);
+        p.spin = frange(-5.0f, 5.0f);
+        p.t       = 0.0f;
+        p.maxLife = frange(0.25f, 0.55f);
+        p.size    = ar * frange(0.25f, 0.55f);
+        p.r = cr + frange(-0.08f, 0.08f);
+        p.g = cg + frange(-0.08f, 0.08f);
+        p.b = cb + frange(-0.08f, 0.08f);
+        p.alive = true;
+        particles_.push_back(p);
+    }
+}
+
 void Game::checkHighScore() {
     if (score_ <= 0) return;
     int pos = kMaxScores;
@@ -180,6 +211,8 @@ void Game::startLevel(int level) {
     invuln_ = 1.2f;        // brief grace at level start
     asteroids_.clear();
     bullets_.clear();
+    particles_.clear();
+    explosions_.clear();
     state_ = PLAYING;
 }
 
@@ -202,6 +235,26 @@ void Game::spawnAsteroid(bool ambient) {
 void Game::update(float dt) {
     if (dt > 0.05f) dt = 0.05f;   // clamp huge hitches
     animTime_ += dt;
+
+    // Particles and explosions animate in all states.
+    for (auto& p : particles_) {
+        if (!p.alive) continue;
+        p.x  += p.vx * dt; p.y  += p.vy * dt;
+        p.vx *= 0.88f;     p.vy *= 0.88f; // drag
+        p.rot += p.spin * dt;
+        p.t   += dt;
+        if (p.t >= p.maxLife) p.alive = false;
+    }
+    for (size_t i = particles_.size(); i-- > 0;)
+        if (!particles_[i].alive) particles_.erase(particles_.begin() + i);
+
+    for (auto& e : explosions_) {
+        if (!e.alive) continue;
+        e.t += dt;
+        if (e.t >= e.maxLife) e.alive = false;
+    }
+    for (size_t i = explosions_.size(); i-- > 0;)
+        if (!explosions_[i].alive) explosions_.erase(explosions_.begin() + i);
 
     // Stars scroll in every state for a sense of motion.
     for (auto& s : stars_) {
@@ -266,6 +319,16 @@ void Game::update(float dt) {
                         lives_--;
                         invuln_ = 1.5f;
                         if (audio_) audio_->triggerPlayerHit();
+                        // Asteroid breaks apart
+                        spawnDebris(a.x, a.y, a.r, a.cr, a.cg, a.cb);
+                        // Cyan spark flash at ship position
+                        Explosion shipFlash;
+                        shipFlash.x = shipX_; shipFlash.y = shipY_;
+                        shipFlash.radius = shipScale_;
+                        shipFlash.t = 0.0f; shipFlash.maxLife = 0.18f;
+                        shipFlash.cr = 0.45f; shipFlash.cg = 0.9f; shipFlash.cb = 1.0f;
+                        shipFlash.alive = true;
+                        explosions_.push_back(shipFlash);
                         if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
                     }
                 }
@@ -303,6 +366,7 @@ void Game::update(float dt) {
                         score_ += 10 * level_;
                         dodgedThisLevel_++;
                         if (audio_) audio_->triggerExplosion();
+                        spawnDebris(a.x, a.y, a.r, a.cr, a.cg, a.cb);
                         break;
                     }
                 }
@@ -425,6 +489,23 @@ void Game::render(std::vector<DrawCmd>& out) {
     // bullets
     for (auto& b : bullets_)
         emit(out, SHAPE_QUAD, b.x, b.y, 0.011f, 0.028f, 0.0f, 1.0f, 1.0f, 0.55f, 1.0f);
+
+    // explosion flash rings (expanding, fading)
+    for (auto& e : explosions_) {
+        float t = e.t / e.maxLife;                // 0→1
+        float s = e.radius * (1.0f + t * 3.5f);  // expand outward
+        float a = (1.0f - t) * 0.85f;
+        // Flash starts white-orange, fades toward asteroid colour
+        float fr = 1.0f,        fg = 0.65f + e.cr * 0.35f, fb = 0.10f;
+        emit(out, SHAPE_ASTEROID, e.x, e.y, s, s, 0.0f, fr, fg, fb, a);
+    }
+
+    // debris fragments
+    for (auto& p : particles_) {
+        float life = 1.0f - p.t / p.maxLife;     // 1→0
+        float sz   = p.size * life;
+        emit(out, SHAPE_ASTEROID, p.x, p.y, sz, sz, p.rot, p.r, p.g, p.b, life);
+    }
 
     // ship (PLAYING + TITLE). Blink while invulnerable.
     bool showShip = (state_ == PLAYING || state_ == TITLE);

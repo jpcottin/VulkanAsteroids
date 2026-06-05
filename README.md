@@ -19,6 +19,7 @@ Dodge and shoot asteroids across five increasingly difficult levels.
 - **Lives:** 3 lives; invulnerability blinks after each hit.
 - **HUD:** score (top-left) · lives (top-center) · level (top-right).
 - **Ship banking:** the ship tilts ±20° into the direction of travel.
+- **High scores:** top-5 leaderboard persisted locally; gold/silver/bronze podium on the title screen; gold pulsing score + rank medal on game over when a new record is set.
 
 ## Tech
 
@@ -26,6 +27,8 @@ Dodge and shoot asteroids across five increasingly difficult levels.
   with `native_app_glue`; no Kotlin, no Compose, no Java.
 - **Hand-written Vulkan 2D renderer** — one graphics pipeline, push-constant
   transforms, flat-shaded primitives (9-vertex delta-wing ship, 12-gon asteroids, quads).
+  Asteroid destruction spawns a visual explosion: expanding flash ring + 10 debris
+  fragments with drag and spin. Ship collision also triggers a cyan impact flash.
 - **Procedural audio via [Oboe](https://github.com/google/oboe)** — laser sweep,
   explosion burst, hit thud, level-clear arpeggio, thrust rumble; all synthesised
   at runtime, no audio files.

@@ -32,6 +32,19 @@ private:
         bool alive;
     };
     struct Bullet { float x, y, vy, life; bool alive; };
+    struct Particle {
+        float x, y, vx, vy;
+        float rot, spin;
+        float t, maxLife, size;
+        float r, g, b;
+        bool alive;
+    };
+    struct Explosion {
+        float x, y, radius;
+        float t, maxLife;
+        float cr, cg, cb;
+        bool alive;
+    };
     struct Star { float x, y, size; };
     struct Pointer { bool active; float x, y; };
 
@@ -51,6 +64,7 @@ private:
     void loadHighScores();
     void saveHighScores();
     void checkHighScore();
+    void spawnDebris(float x, float y, float r, float cr, float cg, float cb);
 
     // emit one shape: world centre (wx,wy), world half-extents (sx,sy), rotation, rgba.
     void emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
@@ -118,8 +132,10 @@ private:
     float spawnInterval_ = 1.0f;
     float fallSpeed_ = 0.5f;
 
-    std::vector<Asteroid> asteroids_;
-    std::vector<Bullet> bullets_;
-    std::vector<Star> stars_;
+    std::vector<Asteroid>  asteroids_;
+    std::vector<Bullet>    bullets_;
+    std::vector<Particle>  particles_;
+    std::vector<Explosion> explosions_;
+    std::vector<Star>      stars_;
     uint32_t rng_ = 0x1234567u;
 };

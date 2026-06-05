@@ -63,12 +63,16 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
                 break;
             }
             case ST::EXPLOSION: {
-                constexpr float dur = 0.32f;
+                constexpr float dur = 0.50f;
                 if (v.t > dur) { v.active = false; break; }
-                float env  = expf(-v.t / 0.07f);
-                // phase reused as LPF state
-                v.phase    = v.phase * 0.60f + white() * 0.40f;
-                s = v.phase * env * 0.62f;
+                // Sharp transient crack (raw noise, 10 ms)
+                float crack  = white() * expf(-v.t / 0.010f) * 0.65f;
+                // Mid-range rumble (aggressive LPF noise)
+                v.phase      = v.phase * 0.48f + white() * 0.52f;
+                float rumble = v.phase * expf(-v.t / 0.09f) * 0.75f;
+                // Low boom (55 Hz sine, punchy decay)
+                float boom   = sinf(v.t * kTau * 55.0f) * expf(-v.t / 0.045f) * 0.45f;
+                s = crack + rumble + boom;
                 break;
             }
             case ST::HIT: {
