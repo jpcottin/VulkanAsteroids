@@ -1,6 +1,8 @@
 #include "game.h"
 #include "audio.h"
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 // ---- level tuning (1..5, very easy -> hard) ----
 static int clampLevel(int L) { return L < 1 ? 1 : (L > 5 ? 5 : L); }
@@ -101,9 +103,65 @@ void Game::onPointersCancel() {
     for (auto& p : pointers_) p.active = false;
 }
 
+// ── High score persistence ────────────────────────────────────────────────────
+
+static const uint32_t kHsMagic = 0x41535452u; // "ASTR"
+
+void Game::setDataPath(const char* path) {
+    if (!path || path[0] == '\0') return;
+    snprintf(dataPath_, sizeof(dataPath_), "%s/highscores.bin", path);
+    loadHighScores();
+}
+
+void Game::loadHighScores() {
+    if (dataPath_[0] == '\0') return;
+    FILE* f = fopen(dataPath_, "rb");
+    if (!f) return;
+    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf;
+    if (fread(&buf, sizeof(buf), 1, f) == 1 && buf.magic == kHsMagic) {
+        int n = (int)buf.count < kMaxScores ? (int)buf.count : kMaxScores;
+        for (int i = 0; i < n; i++) {
+            highScores_[i].score = (long)buf.e[i].score;
+            highScores_[i].level = buf.e[i].level;
+        }
+    }
+    fclose(f);
+}
+
+void Game::saveHighScores() {
+    if (dataPath_[0] == '\0') return;
+    FILE* f = fopen(dataPath_, "wb");
+    if (!f) return;
+    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf;
+    buf.magic = kHsMagic;
+    buf.count = kMaxScores;
+    for (int i = 0; i < kMaxScores; i++) {
+        buf.e[i].score = (int64_t)highScores_[i].score;
+        buf.e[i].level = highScores_[i].level;
+    }
+    fwrite(&buf, sizeof(buf), 1, f);
+    fclose(f);
+}
+
+void Game::checkHighScore() {
+    if (score_ <= 0) return;
+    int pos = kMaxScores;
+    for (int i = 0; i < kMaxScores; i++) {
+        if (score_ > highScores_[i].score) { pos = i; break; }
+    }
+    if (pos == kMaxScores) return;
+    for (int i = kMaxScores - 1; i > pos; i--) highScores_[i] = highScores_[i - 1];
+    highScores_[pos] = {score_, level_};
+    newHighScore_     = true;
+    newHighScoreRank_ = pos;
+    saveHighScores();
+}
+
 void Game::startGame() {
     score_ = 0;
     lives_ = 3;
+    newHighScore_     = false;
+    newHighScoreRank_ = -1;
     startLevel(1);
 }
 
@@ -208,7 +266,7 @@ void Game::update(float dt) {
                         lives_--;
                         invuln_ = 1.5f;
                         if (audio_) audio_->triggerPlayerHit();
-                        if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; }
+                        if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
                     }
                 }
                 if (a.alive && a.y - a.r > 1.05f) {
@@ -269,7 +327,7 @@ void Game::update(float dt) {
         case LEVEL_CLEAR: {
             stateTimer_ += dt;
             if (stateTimer_ >= 1.8f) {
-                if (level_ >= 5) { state_ = WIN; stateTimer_ = 0.0f; }
+                if (level_ >= 5) { state_ = WIN; stateTimer_ = 0.0f; checkHighScore(); }
                 else startLevel(level_ + 1);
             }
             break;
@@ -428,9 +486,27 @@ void Game::render(std::vector<DrawCmd>& out) {
     float pulse = 0.5f + 0.5f * sinf(animTime_ * 4.0f);
 
     if (state_ == TITLE) {
-        // big title ship + pulsing tap hint
+        // big title ship
         emit(out, SHAPE_SHIP, 0.0f, -0.15f, 0.22f, 0.22f, 0.0f,
              0.5f, 0.95f, 1.0f, 1.0f);
+
+        // High score podium (top 3, gold/silver/bronze)
+        static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
+        static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
+        static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
+        const float hh = 0.052f, rowY[3] = {0.13f, 0.25f, 0.37f};
+        for (int i = 0; i < 3; i++) {
+            if (highScores_[i].score <= 0) break;
+            float pr = kPodR[i], pg = kPodG[i], pb = kPodB[i];
+            // Rank ship icon
+            emit(out, SHAPE_SHIP, -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr, pg, pb, 1.0f);
+            // Score
+            drawNumber(out, (int)highScores_[i].score, -asp_*0.50f, rowY[i], hh, pr, pg, pb, 1.0f);
+            // Level digit (right-aligned)
+            drawDigit(out, highScores_[i].level, asp_*0.62f, rowY[i], hh, pr, pg, pb, 0.80f);
+        }
+
+        // pulsing tap hint
         float s = 0.05f + 0.015f * pulse;
         emit(out, SHAPE_SHIP, 0.0f, 0.45f, s, s, 0.0f,
              1.0f, 1.0f, 1.0f, 0.4f + 0.6f * pulse);
@@ -438,14 +514,23 @@ void Game::render(std::vector<DrawCmd>& out) {
         // big green level number just cleared
         drawNumber(out, level_, 0.0f, -0.05f, 0.42f, 0.4f, 1.0f, 0.5f, 1.0f);
     } else if (state_ == GAME_OVER) {
-        // red wash + final score
         emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
              0.6f, 0.05f, 0.08f, 0.32f + 0.10f * pulse);
         int n = numDigits((int)score_);
         float fh = 0.30f, fw = fh * 0.6f * 1.45f;
         float firstCx = -(n - 1) * fw * 0.5f;
-        drawNumber(out, (int)score_, firstCx, -0.05f, fh, 1.0f, 1.0f, 1.0f, 1.0f);
-        // pulsing restart hint (small ship)
+        // Gold pulsing score if new high score, white otherwise
+        float sr = 1.0f, sg = newHighScore_ ? (0.75f + 0.20f*pulse) : 1.0f, sb = newHighScore_ ? 0.10f : 1.0f;
+        drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
+        // Rank digit above score when it's a new high score
+        if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
+            static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
+            static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
+            static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
+            int ri = newHighScoreRank_;
+            drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
+                      kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
+        }
         emit(out, SHAPE_SHIP, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
              1.0f, 1.0f, 1.0f, 0.3f + 0.6f * pulse);
     } else if (state_ == WIN) {
@@ -454,7 +539,16 @@ void Game::render(std::vector<DrawCmd>& out) {
         int n = numDigits((int)score_);
         float fh = 0.30f, fw = fh * 0.6f * 1.45f;
         float firstCx = -(n - 1) * fw * 0.5f;
-        drawNumber(out, (int)score_, firstCx, -0.05f, fh, 1.0f, 0.9f, 0.3f, 1.0f);
+        float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
+        drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
+        if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
+            static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
+            static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
+            static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
+            int ri = newHighScoreRank_;
+            drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
+                      kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
+        }
         emit(out, SHAPE_SHIP, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
              1.0f, 1.0f, 1.0f, 0.3f + 0.6f * pulse);
     }

@@ -91,6 +91,7 @@ void android_main(android_app* app) {
     app->onInputEvent = handle_input;
 
     engine.instanceReady = engine.renderer.initInstance();
+    engine.game.setDataPath(app->activity->internalDataPath);
     engine.lastTime = now_s();
 
     while (true) {

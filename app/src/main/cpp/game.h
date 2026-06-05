@@ -35,6 +35,9 @@ private:
     struct Star { float x, y, size; };
     struct Pointer { bool active; float x, y; };
 
+    struct HighScore { long score = 0; int level = 0; };
+    static const int kMaxScores = 5;
+
     // --- helpers ---
     float frand();
     float frange(float a, float b);
@@ -45,6 +48,9 @@ private:
     bool rightHeld() const;
     bool thrustHeld() const;
     bool fireHeld() const;
+    void loadHighScores();
+    void saveHighScores();
+    void checkHighScore();
 
     // emit one shape: world centre (wx,wy), world half-extents (sx,sy), rotation, rgba.
     void emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
@@ -57,8 +63,16 @@ private:
 
     // --- audio ---
     AudioEngine* audio_ = nullptr;
+
+    // --- high scores ---
+    HighScore highScores_[kMaxScores] = {};
+    bool newHighScore_    = false;
+    int  newHighScoreRank_= -1;
+    char dataPath_[512]   = {};
+
 public:
     void setAudioEngine(AudioEngine* a) { audio_ = a; }
+    void setDataPath(const char* path);
 
     // --- test / debug accessors ---
 public:
