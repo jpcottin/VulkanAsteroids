@@ -130,6 +130,10 @@ public:
         a.gen = gen; a.alive = true;
         asteroids_.push_back(a);
     }
+    bool shieldActiveForTest()     const { return shieldActive_; }
+    bool spreadActiveForTest()     const { return spreadActive_; }
+    bool speedBoostActiveForTest() const { return speedBoostActive_; }
+    void triggerNewGameForTest()         { startGame(); }
 #endif
 
 private:

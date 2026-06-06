@@ -267,3 +267,26 @@ TEST(Splitting, MediumAsteroidSplitsOnce) {
     g.onPointerUp(0);
     EXPECT_EQ(g.asteroidCount(), 2);
 }
+
+// ── Power-up session isolation ─────────────────────────────────────────────────
+
+TEST(PowerUp, NotCarriedToNewGame) {
+    // Verify that power-ups active at game-over do NOT bleed into the next game.
+    Game g;
+    startPlaying(g);
+    g.activatePowerUpForTest(1);  // spread
+    ASSERT_TRUE(g.spreadActiveForTest());
+
+    // Start a new game (simulates tap-restart after GAME_OVER/WIN).
+    g.triggerNewGameForTest();
+
+    EXPECT_FALSE(g.spreadActiveForTest());
+    EXPECT_FALSE(g.shieldActiveForTest());
+    EXPECT_FALSE(g.speedBoostActiveForTest());
+
+    // Confirm in practice: firing now produces 1 bullet (not 3).
+    g.onPointerDown(0, kFireX, kFireY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.bulletCount(), 1);
+}

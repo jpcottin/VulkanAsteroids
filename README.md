@@ -64,7 +64,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-22 tests covering ship physics (gravity, thrust, clamping), input zone
+23 tests covering ship physics (gravity, thrust, clamping), input zone
 isolation, bullet spawning/cooldown/expiry, spread shot, speed boost,
 and asteroid splitting. Run on a connected device or emulator:
 
@@ -92,7 +92,7 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs 22 Google Test cases on an API-34 x86\_64 emulator | — |
+| **Native Tests** | Runs 23 Google Test cases on an API-34 x86\_64 emulator | — |
 | **Smoke Test** | Runs the Android instrumented test; captures an in-game screenshot via `UiAutomation` | `smoke-screenshot`, `smoke-test-results`, `smoke-logcat` |
 
 ## License
