@@ -5,9 +5,9 @@
 #include <cstring>
 
 // ---- level tuning (1..5, very easy -> hard) ----
-static int clampLevel(int L) { return L < 1 ? 1 : (L > 5 ? 5 : L); }
-static float levelFall(int L)   { return 0.50f + 0.13f * (clampLevel(L) - 1); }
-static float levelSpawn(int L)  { return 1.00f - 0.11f * (clampLevel(L) - 1); }
+static int clampLevel(int L) { return L < 1 ? 1 : (L > 10 ? 10 : L); }
+static float levelFall(int L)   { return 0.50f + 0.08f * (clampLevel(L) - 1); }
+static float levelSpawn(int L)  { return 1.00f - 0.07f * (clampLevel(L) - 1); }
 static int   levelGoal(int L)   { return 10 + 2 * clampLevel(L); }
 
 static const float kStarSpeed  = 0.18f;
@@ -20,6 +20,7 @@ static const float kBulletLife  = 2.20f;
 
 // 7-segment masks for digits 0..9 (bit a=1,b=2,c=4,d=8,e=16,f=32,g=64).
 static const int kDigitSeg[10] = {63, 6, 91, 79, 102, 109, 125, 7, 127, 111};
+
 
 Game::Game() {}
 
@@ -38,10 +39,17 @@ void Game::setViewport(int w, int h) {
     if (stars_.empty()) {
         for (int i = 0; i < 60; i++) {
             Star s;
-            s.x = frange(-1.0f, 1.0f);   // normalized; scaled by asp at draw time
+            s.x = frange(-1.0f, 1.0f);
             s.y = frange(-1.0f, 1.0f);
             s.size = frange(0.004f, 0.011f);
             stars_.push_back(s);
+        }
+        for (int i = 0; i < 20; i++) {
+            Star s;
+            s.x = frange(-1.0f, 1.0f);
+            s.y = frange(-1.0f, 1.0f);
+            s.size = frange(0.007f, 0.016f);
+            starsNear_.push_back(s);
         }
     }
     float lim = asp_ - shipScale_;
@@ -193,6 +201,10 @@ void Game::startGame() {
     lives_ = 3;
     newHighScore_     = false;
     newHighScoreRank_ = -1;
+    // Reset power-ups fully on new game (they only carry across levels, not sessions).
+    shieldActive_ = false;    shieldTimer_     = 0.0f;
+    spreadActive_ = false;    spreadTimer_     = 0.0f;
+    speedBoostActive_ = false; speedBoostTimer_ = 0.0f;
     startLevel(1);
 }
 
@@ -213,6 +225,10 @@ void Game::startLevel(int level) {
     bullets_.clear();
     particles_.clear();
     explosions_.clear();
+    powerUps_.clear();
+    // Power-up state intentionally NOT reset — bonuses carry across levels.
+    powerUpSpawnTimer_ = 12.0f;
+    shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f;
     state_ = PLAYING;
 }
 
@@ -221,6 +237,7 @@ void Game::spawnAsteroid(bool ambient) {
     a.r = frange(0.05f, 0.11f);
     a.x = frange(-asp_ + a.r, asp_ - a.r);
     a.y = -1.15f - a.r;
+    a.vx = 0.0f;
     a.vy = (ambient ? frange(0.30f, 0.55f) : fallSpeed_ * frange(0.85f, 1.15f));
     a.spin = frange(-2.0f, 2.0f);
     a.rot = frange(0.0f, 6.28f);
@@ -228,8 +245,38 @@ void Game::spawnAsteroid(bool ambient) {
     a.cr = 0.62f + tint;
     a.cg = 0.55f + tint * 0.6f;
     a.cb = 0.48f + tint * 0.4f;
+    a.gen = 0;
     a.alive = true;
     asteroids_.push_back(a);
+}
+
+void Game::splitAsteroid(const Asteroid& a) {
+    for (int k = 0; k < 2; k++) {
+        Asteroid child;
+        child.r   = a.r * 0.55f;
+        child.x   = a.x + (k == 0 ? -1.0f : 1.0f) * a.r * 0.45f;
+        child.y   = a.y;
+        child.vx  = (k == 0 ? -1.0f : 1.0f) * frange(0.18f, 0.40f);
+        child.vy  = a.vy * frange(0.85f, 1.25f);
+        child.spin = frange(-3.5f, 3.5f);
+        child.rot  = frange(0.0f, 6.28f);
+        child.cr = a.cr; child.cg = a.cg; child.cb = a.cb;
+        child.gen = a.gen + 1;
+        child.alive = true;
+        asteroids_.push_back(child);
+    }
+}
+
+void Game::spawnPowerUp(float x, float y) {
+    PowerUp p;
+    p.x    = x;
+    p.y    = y;
+    p.vy   = 0.28f;
+    p.rot  = 0.0f;
+    p.spin = frange(-2.5f, 2.5f);
+    p.type  = (PowerUpType)((int)(frand() * 3.0f));
+    p.alive = true;
+    powerUps_.push_back(p);
 }
 
 void Game::update(float dt) {
@@ -261,6 +308,18 @@ void Game::update(float dt) {
         s.y += kStarSpeed * dt;
         if (s.y > 1.05f) { s.y = -1.05f; s.x = frange(-1.0f, 1.0f); }
     }
+    for (auto& s : starsNear_) {
+        s.y += kStarSpeed * 3.2f * dt;
+        if (s.y > 1.05f) { s.y = -1.05f; s.x = frange(-1.0f, 1.0f); }
+    }
+
+    // Screen shake decay.
+    if (shakeAmt_ > 0.0f) {
+        shakeX_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
+        shakeY_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
+        shakeAmt_ *= 0.78f;
+        if (shakeAmt_ < 0.01f) { shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f; }
+    }
 
     bool tapped = tapPending_;
     tapPending_ = false;
@@ -280,9 +339,40 @@ void Game::update(float dt) {
             // Audio: sync thrust sound each frame
             if (audio_) audio_->setThrust(thrustHeld());
 
+            // Power-up timers
+            if (shieldActive_)     { shieldTimer_     -= dt; if (shieldTimer_     <= 0) shieldActive_     = false; }
+            if (spreadActive_)     { spreadTimer_     -= dt; if (spreadTimer_     <= 0) spreadActive_     = false; }
+            if (speedBoostActive_) { speedBoostTimer_ -= dt; if (speedBoostTimer_ <= 0) speedBoostActive_ = false; }
+
+            // Power-up spawn
+            powerUpSpawnTimer_ -= dt;
+            if (powerUpSpawnTimer_ <= 0.0f) {
+                spawnPowerUp(frange(-asp_ * 0.7f, asp_ * 0.7f), -1.1f);
+                powerUpSpawnTimer_ = frange(12.0f, 18.0f);
+            }
+
+            // Power-up movement + collection
+            float puR = 0.045f;
+            for (auto& pu : powerUps_) {
+                if (!pu.alive) continue;
+                pu.y   += pu.vy * dt;
+                pu.rot += pu.spin * dt;
+                if (pu.y > 1.1f) { pu.alive = false; continue; }
+                float dx = pu.x - shipX_, dy = pu.y - shipY_;
+                if (dx*dx + dy*dy < (puR + shipR_) * (puR + shipR_)) {
+                    pu.alive = false;
+                    if (pu.type == PU_SHIELD)      { shieldActive_ = true;     shieldTimer_     = 8.0f; }
+                    else if (pu.type == PU_SPREAD)  { spreadActive_ = true;     spreadTimer_     = 8.0f; }
+                    else                            { speedBoostActive_ = true; speedBoostTimer_ = 8.0f; }
+                }
+            }
+            for (size_t i = powerUps_.size(); i-- > 0;)
+                if (!powerUps_[i].alive) powerUps_.erase(powerUps_.begin() + i);
+
             // Horizontal movement + tilt
             int dir = (rightHeld() ? 1 : 0) - (leftHeld() ? 1 : 0);
-            shipX_ += dir * shipSpeed_ * dt;
+            float effectiveSpeed = shipSpeed_ * (speedBoostActive_ ? 1.65f : 1.0f);
+            shipX_ += dir * effectiveSpeed * dt;
             float lim = asp_ - shipScale_;
             if (shipX_ > lim) shipX_ = lim;
             if (shipX_ < -lim) shipX_ = -lim;
@@ -309,6 +399,7 @@ void Game::update(float dt) {
 
             // Asteroid movement and ship collision
             for (auto& a : asteroids_) {
+                a.x += a.vx * dt;
                 a.y += a.vy * dt;
                 a.rot += a.spin * dt;
                 if (invuln_ <= 0.0f) {
@@ -316,20 +407,25 @@ void Game::update(float dt) {
                     float rad = a.r + shipR_;
                     if (dx * dx + dy * dy < rad * rad) {
                         a.alive = false;
-                        lives_--;
-                        invuln_ = 1.5f;
-                        if (audio_) audio_->triggerPlayerHit();
-                        // Asteroid breaks apart
                         spawnDebris(a.x, a.y, a.r, a.cr, a.cg, a.cb);
-                        // Cyan spark flash at ship position
-                        Explosion shipFlash;
-                        shipFlash.x = shipX_; shipFlash.y = shipY_;
-                        shipFlash.radius = shipScale_;
-                        shipFlash.t = 0.0f; shipFlash.maxLife = 0.18f;
-                        shipFlash.cr = 0.45f; shipFlash.cg = 0.9f; shipFlash.cb = 1.0f;
-                        shipFlash.alive = true;
-                        explosions_.push_back(shipFlash);
-                        if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
+                        if (shieldActive_) {
+                            // Shield absorbs the hit — consume it, no life lost
+                            shieldActive_ = false; shieldTimer_ = 0.0f;
+                            shakeAmt_ = 0.5f;
+                        } else {
+                            lives_--;
+                            invuln_ = 1.5f;
+                            shakeAmt_ = 1.0f;
+                            if (audio_) audio_->triggerPlayerHit();
+                            Explosion shipFlash;
+                            shipFlash.x = shipX_; shipFlash.y = shipY_;
+                            shipFlash.radius = shipScale_;
+                            shipFlash.t = 0.0f; shipFlash.maxLife = 0.18f;
+                            shipFlash.cr = 0.45f; shipFlash.cg = 0.9f; shipFlash.cb = 1.0f;
+                            shipFlash.alive = true;
+                            explosions_.push_back(shipFlash);
+                            if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
+                        }
                     }
                 }
                 if (a.alive && a.y - a.r > 1.05f) {
@@ -342,21 +438,32 @@ void Game::update(float dt) {
             // Fire and bullet update
             if (fireCooldown_ > 0.0f) fireCooldown_ -= dt;
             if (fireHeld() && fireCooldown_ <= 0.0f) {
-                Bullet b;
-                b.x = shipX_;
-                b.y = shipY_ - shipScale_ * 1.1f;
-                b.vy = -kBulletSpeed;
-                b.life = kBulletLife;
-                b.alive = true;
-                bullets_.push_back(b);
+                auto fireBullet = [&](float ox, float vx) {
+                    Bullet b;
+                    b.x = shipX_ + ox;
+                    b.y = shipY_ - shipScale_ * 1.1f;
+                    b.vx = vx;
+                    b.vy = -kBulletSpeed;
+                    b.life = kBulletLife;
+                    b.alive = true;
+                    bullets_.push_back(b);
+                };
+                fireBullet(0.0f, 0.0f);
+                if (spreadActive_) {
+                    fireBullet(-shipScale_ * 0.55f, -0.28f);
+                    fireBullet( shipScale_ * 0.55f,  0.28f);
+                }
                 fireCooldown_ = kFireCooldown;
                 if (audio_) audio_->triggerLaser();
             }
             for (auto& b : bullets_) {
                 if (!b.alive) continue;
+                b.x += b.vx * dt;
                 b.y += b.vy * dt;
                 b.life -= dt;
-                if (b.y < -1.15f || b.life <= 0.0f) { b.alive = false; continue; }
+                if (b.x < -asp_ - 0.1f || b.x > asp_ + 0.1f || b.y < -1.15f || b.life <= 0.0f) {
+                    b.alive = false; continue;
+                }
                 for (auto& a : asteroids_) {
                     if (!a.alive) continue;
                     float dx = b.x - a.x, dy = b.y - a.y;
@@ -366,7 +473,12 @@ void Game::update(float dt) {
                         score_ += 10 * level_;
                         dodgedThisLevel_++;
                         if (audio_) audio_->triggerExplosion();
-                        spawnDebris(a.x, a.y, a.r, a.cr, a.cg, a.cb);
+                        // Copy before push_backs: splitAsteroid/spawnPowerUp may reallocate
+                        // asteroids_, invalidating the 'a' reference.
+                        Asteroid dead = a;
+                        spawnDebris(dead.x, dead.y, dead.r, dead.cr, dead.cg, dead.cb);
+                        if (dead.gen < 2) splitAsteroid(dead);
+                        if (frand() < 0.15f) spawnPowerUp(dead.x, dead.y);
                         break;
                     }
                 }
@@ -391,7 +503,7 @@ void Game::update(float dt) {
         case LEVEL_CLEAR: {
             stateTimer_ += dt;
             if (stateTimer_ >= 1.8f) {
-                if (level_ >= 5) { state_ = WIN; stateTimer_ = 0.0f; checkHighScore(); }
+                if (level_ >= 10) { state_ = WIN; stateTimer_ = 0.0f; checkHighScore(); }
                 else startLevel(level_ + 1);
             }
             break;
@@ -424,8 +536,8 @@ void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
     d.mtx[1] = -sy * s / asp_;
     d.mtx[2] = sx * s;
     d.mtx[3] = sy * c;
-    d.tx = wx / asp_;
-    d.ty = wy;
+    d.tx = wx / asp_ + shakeX_;
+    d.ty = wy + shakeY_;
     d.color[0] = r; d.color[1] = g; d.color[2] = b; d.color[3] = a;
     d.shape = shape;
     out.push_back(d);
@@ -476,19 +588,106 @@ void Game::drawNumber(std::vector<DrawCmd>& out, int value, float firstCx, float
     }
 }
 
+void Game::drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
+                      float h, float r, float g, float b, float a) {
+    if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
+    if (ch >= '0' && ch <= '9') { drawDigit(out, ch - '0', cx, cy, h, r, g, b, a); return; }
+    if (ch < 'A' || ch > 'Z') return;
+
+    // Stroke font: each letter built from line segments.
+    // Coords are in letter-local space: x in [-1,1], y in [-1,1] (top=-1, bot=+1).
+    float hw = h * 0.38f;  // half-width
+    float hh = h * 0.50f;  // half-height
+    float th = h * 0.07f;  // stroke thickness
+
+    auto stroke = [&](float x1, float y1, float x2, float y2) {
+        float wx1 = cx + x1 * hw,  wy1 = cy + y1 * hh;
+        float wx2 = cx + x2 * hw,  wy2 = cy + y2 * hh;
+        float dx = wx2 - wx1, dy = wy2 - wy1;
+        float len = sqrtf(dx*dx + dy*dy);
+        if (len < 0.001f) return;
+        float rot = atan2f(wx1 - wx2, wy2 - wy1);
+        emit(out, SHAPE_QUAD, (wx1+wx2)*0.5f, (wy1+wy2)*0.5f, th, len*0.5f, rot, r, g, b, a);
+    };
+
+    switch (ch) {
+        case 'A': stroke(-1,1,0,-1); stroke(1,1,0,-1); stroke(-0.5f,0.1f,0.5f,0.1f); break;
+        case 'B': stroke(-1,-1,-1,1); stroke(-1,-1,0.6f,-1); stroke(0.6f,-1,1,-0.5f); stroke(1,-0.5f,0.6f,0); stroke(0.6f,0,-1,0); stroke(-1,0,0.8f,0); stroke(0.8f,0,1,0.5f); stroke(1,0.5f,0.8f,1); stroke(0.8f,1,-1,1); break;
+        case 'C': stroke(1,-0.7f,0,-1); stroke(0,-1,-1,-0.3f); stroke(-1,-0.3f,-1,0.3f); stroke(-1,0.3f,0,1); stroke(0,1,1,0.7f); break;
+        case 'D': stroke(-1,-1,-1,1); stroke(-1,-1,0.3f,-1); stroke(0.3f,-1,1,-0.4f); stroke(1,-0.4f,1,0.4f); stroke(1,0.4f,0.3f,1); stroke(0.3f,1,-1,1); break;
+        case 'E': stroke(-1,-1,-1,1); stroke(-1,-1,1,-1); stroke(-1,0,0.6f,0); stroke(-1,1,1,1); break;
+        case 'F': stroke(-1,-1,-1,1); stroke(-1,-1,1,-1); stroke(-1,0,0.6f,0); break;
+        case 'G': stroke(1,-0.7f,0,-1); stroke(0,-1,-1,-0.3f); stroke(-1,-0.3f,-1,0.3f); stroke(-1,0.3f,0,1); stroke(0,1,1,0.7f); stroke(1,0.7f,1,0); stroke(1,0,0.2f,0); break;
+        case 'H': stroke(-1,-1,-1,1); stroke(1,-1,1,1); stroke(-1,0,1,0); break;
+        case 'I': stroke(-0.5f,-1,0.5f,-1); stroke(0,-1,0,1); stroke(-0.5f,1,0.5f,1); break;
+        case 'J': stroke(0.5f,-1,0.5f,0.6f); stroke(0.5f,0.6f,0,1); stroke(0,1,-0.5f,0.7f); break;
+        case 'K': stroke(-1,-1,-1,1); stroke(-1,0,1,-1); stroke(-1,0,1,1); break;
+        case 'L': stroke(-1,-1,-1,1); stroke(-1,1,1,1); break;
+        case 'M': stroke(-1,1,-1,-1); stroke(-1,-1,0,0.3f); stroke(0,0.3f,1,-1); stroke(1,-1,1,1); break;
+        case 'N': stroke(-1,1,-1,-1); stroke(-1,-1,1,1); stroke(1,1,1,-1); break;
+        case 'O': stroke(-1,-1,1,-1); stroke(1,-1,1,1); stroke(1,1,-1,1); stroke(-1,1,-1,-1); break;
+        case 'P': stroke(-1,-1,-1,1); stroke(-1,-1,0.7f,-1); stroke(0.7f,-1,1,-0.5f); stroke(1,-0.5f,0.7f,0); stroke(0.7f,0,-1,0); break;
+        case 'Q': stroke(-1,-1,1,-1); stroke(1,-1,1,1); stroke(1,1,-1,1); stroke(-1,1,-1,-1); stroke(0.2f,0.4f,1,1); break;
+        case 'R': stroke(-1,-1,-1,1); stroke(-1,-1,0.7f,-1); stroke(0.7f,-1,1,-0.5f); stroke(1,-0.5f,0.7f,0); stroke(0.7f,0,-1,0); stroke(-0.1f,0,1,1); break;
+        case 'S': stroke(1,-0.8f,-1,-1); stroke(-1,-1,-1,0); stroke(-1,0,1,0); stroke(1,0,1,1); stroke(1,1,-1,0.8f); break;
+        case 'T': stroke(-1,-1,1,-1); stroke(0,-1,0,1); break;
+        case 'U': stroke(-1,-1,-1,0.7f); stroke(-1,0.7f,0,1); stroke(0,1,1,0.7f); stroke(1,0.7f,1,-1); break;
+        case 'V': stroke(-1,-1,0,1); stroke(1,-1,0,1); break;
+        case 'W': stroke(-1,-1,-0.5f,1); stroke(-0.5f,1,0,0); stroke(0,0,0.5f,1); stroke(0.5f,1,1,-1); break;
+        case 'X': stroke(-1,-1,1,1); stroke(1,-1,-1,1); break;
+        case 'Y': stroke(-1,-1,0,0); stroke(1,-1,0,0); stroke(0,0,0,1); break;
+        case 'Z': stroke(-1,-1,1,-1); stroke(1,-1,-1,1); stroke(-1,1,1,1); break;
+        default: break;
+    }
+}
+
+void Game::drawText(std::vector<DrawCmd>& out, const char* text, float cx, float cy,
+                    float h, float r, float g, float b, float a) {
+    int total = 0;
+    for (const char* p = text; *p; p++) total++;
+    if (total == 0) return;
+    float step = h * 0.95f;  // stroke font: wider spacing than 7-seg digits
+    float startX = cx - (total - 1) * step * 0.5f;
+    for (int i = 0; text[i]; i++) {
+        if (text[i] != ' ')
+            drawLetter(out, text[i], startX + i * step, cy, h, r, g, b, a);
+    }
+}
+
 void Game::render(std::vector<DrawCmd>& out) {
-    // stars
+    // far stars (dim, slow)
     for (auto& s : stars_)
         emit(out, SHAPE_QUAD, s.x * asp_, s.y, s.size, s.size, 0.0f,
-             0.55f, 0.6f, 0.78f, 0.7f);
+             0.55f, 0.60f, 0.78f, 0.70f);
+    // near stars (bright, fast parallax layer)
+    for (auto& s : starsNear_)
+        emit(out, SHAPE_QUAD, s.x * asp_, s.y, s.size, s.size, 0.0f,
+             0.85f, 0.88f, 1.00f, 0.90f);
 
     // asteroids
     for (auto& a : asteroids_)
         emit(out, SHAPE_ASTEROID, a.x, a.y, a.r, a.r, a.rot, a.cr, a.cg, a.cb, 1.0f);
 
-    // bullets
-    for (auto& b : bullets_)
-        emit(out, SHAPE_QUAD, b.x, b.y, 0.011f, 0.028f, 0.0f, 1.0f, 1.0f, 0.55f, 1.0f);
+    // power-ups: rotating diamond with glow halo
+    for (auto& pu : powerUps_) {
+        if (!pu.alive) continue;
+        float pr, pg, pb;
+        if      (pu.type == PU_SHIELD) { pr=0.30f; pg=0.55f; pb=1.00f; }
+        else if (pu.type == PU_SPREAD) { pr=0.25f; pg=1.00f; pb=0.40f; }
+        else                           { pr=1.00f; pg=0.85f; pb=0.10f; }
+        float sz   = 0.035f;
+        float glow = sz * (1.35f + 0.20f * sinf(animTime_ * 5.0f));
+        emit(out, SHAPE_QUAD, pu.x, pu.y, glow, glow, pu.rot,      pr,   pg,   pb,   0.28f);
+        emit(out, SHAPE_QUAD, pu.x, pu.y, sz,   sz,   pu.rot,      pr,   pg,   pb,   1.00f);
+        emit(out, SHAPE_QUAD, pu.x, pu.y, sz*0.38f, sz*0.38f, pu.rot + 0.785f, 1.0f, 1.0f, 1.0f, 0.85f);
+    }
+
+    // bullets: two-layer laser bolt (outer glow + bright core)
+    for (auto& b : bullets_) {
+        float angle = b.vx != 0.0f ? atan2f(b.vx, -b.vy) : 0.0f;
+        emit(out, SHAPE_QUAD, b.x, b.y, 0.018f, 0.034f, angle, 0.40f, 0.85f, 1.00f, 0.45f);
+        emit(out, SHAPE_QUAD, b.x, b.y, 0.008f, 0.025f, angle, 1.00f, 1.00f, 0.80f, 1.00f);
+    }
 
     // explosion flash rings (expanding, fading)
     for (auto& e : explosions_) {
@@ -535,18 +734,39 @@ void Game::render(std::vector<DrawCmd>& out) {
         // 3. Bright white nose spike (front)
         emit(out, SHAPE_SHIP_NOSE, shipX_, shipY_ + bob, shipScale_, shipScale_, tilt,
              0.88f, 0.97f, 1.00f, 1.0f);
+
+        // Shield bubble when active
+        if (shieldActive_) {
+            float pulse = 0.60f + 0.40f * sinf(animTime_ * 9.0f);
+            float sr = shipScale_ * 1.85f;
+            emit(out, SHAPE_ASTEROID, shipX_, shipY_ + bob, sr, sr, animTime_ * 1.8f,
+                 0.30f, 0.55f, 1.00f, pulse * 0.55f);
+        }
+        // Speed-boost glow trail behind ship
+        if (speedBoostActive_) {
+            float g2 = 0.50f + 0.40f * sinf(animTime_ * 14.0f);
+            emit(out, SHAPE_SHIP_NOSE, shipX_, shipY_ + bob + shipScale_ * 1.2f,
+                 shipScale_ * 0.5f, shipScale_ * 0.6f, 3.14159265f + tilt,
+                 1.0f, 0.85f, 0.10f, g2 * 0.70f);
+        }
     }
 
-    // HUD during gameplay
+    // HUD during gameplay — drawn without screen shake so it stays readable on hit.
     if (state_ == PLAYING || state_ == LEVEL_CLEAR) {
+        float savedShakeX = shakeX_, savedShakeY = shakeY_;
+        shakeX_ = 0.0f; shakeY_ = 0.0f;
+
         float h = 0.085f;
         float w = h * 0.60f;
+        float step = w * 1.45f;
         // score top-left
         drawNumber(out, (int)score_, -asp_ + 0.06f + w * 0.5f, -0.90f, h,
                    1.0f, 1.0f, 1.0f, 1.0f);
-        // level digit top-right (yellow)
-        drawDigit(out, level_, asp_ - 0.06f - w * 0.5f, -0.90f, h,
-                  1.0f, 0.85f, 0.2f, 1.0f);
+        // level number top-right (yellow), right-aligned — supports 2 digits at level 10
+        int nd = numDigits(level_);
+        float levelFirstCx = asp_ - 0.06f - w * 0.5f - (nd - 1) * step;
+        drawNumber(out, level_, levelFirstCx, -0.90f, h,
+                   1.0f, 0.85f, 0.2f, 1.0f);
         // lives as small ship icons, top-center
         float ls = 0.03f, gap = 0.085f;
         float startX = -(lives_ - 1) * gap * 0.5f;
@@ -556,10 +776,14 @@ void Game::render(std::vector<DrawCmd>& out) {
             emit(out, SHAPE_SHIP_BODY,  startX + i * gap, -0.90f, ls, ls, 0.0f,
                  0.28f, 0.72f, 0.92f, 1.0f);
         }
+
+        shakeX_ = savedShakeX; shakeY_ = savedShakeY;
     }
 
-    // Touch button zones (only during active gameplay)
+    // Touch button zones (only during active gameplay) — also shake-free.
     if (state_ == PLAYING) {
+        float savedShakeX2 = shakeX_, savedShakeY2 = shakeY_;
+        shakeX_ = 0.0f; shakeY_ = 0.0f;
         bool th = thrustHeld(), fh = fireHeld();
         // Thrust zone: bottom-left corner
         emit(out, SHAPE_QUAD, -asp_ * 0.70f, 0.72f, asp_ * 0.30f, 0.28f, 0.0f,
@@ -573,11 +797,16 @@ void Game::render(std::vector<DrawCmd>& out) {
              1.00f, 0.40f, 0.20f, fh ? 0.22f : 0.08f);
         emit(out, SHAPE_QUAD, asp_ * 0.70f, 0.72f, 0.011f, 0.030f, 0.0f,
              1.00f, 0.90f, 0.40f, fh ? 1.00f : 0.45f);
+        shakeX_ = savedShakeX2; shakeY_ = savedShakeY2;
     }
 
     float pulse = 0.5f + 0.5f * sinf(animTime_ * 4.0f);
 
     if (state_ == TITLE) {
+        // Title text
+        drawText(out, "VULKAN",    0.0f, -0.80f, 0.115f, 0.35f, 0.78f, 1.00f, 1.0f);
+        drawText(out, "ASTEROIDS", 0.0f, -0.63f, 0.085f, 0.28f, 0.62f, 0.82f, 1.0f);
+
         // big title ship — three layers
         emit(out, SHAPE_SHIP_WINGS, 0.0f, -0.15f, 0.22f, 0.22f, 0.0f,
              0.22f, 0.42f, 0.65f, 1.0f);
