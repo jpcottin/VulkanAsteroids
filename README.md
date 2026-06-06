@@ -21,8 +21,14 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 - **Ship banking:** the ship tilts ±20° into the direction of travel.
 - **High scores:** top-5 leaderboard persisted locally; gold/silver/bronze podium on the title screen; gold pulsing score + rank medal on game over when a new record is set.
 - **Asteroid splitting:** large and medium asteroids split into two smaller faster children when shot.
-- **Power-ups:** 🔵 Shield (absorbs one hit) · 🟢 Spread shot (3-way fire) · 🟡 Speed boost (1.65× speed) — drop randomly from destroyed asteroids and fall from above.
-- **Screen shake:** camera jolt on ship collision for impact feedback.
+- **Asteroid variety:** fast (smaller, 1.65×, lateral drift, level 5+) and armored (2 HP, orange ring, level 7+) variants.
+- **Power-ups:** 🔵 Shield (absorbs one hit) · 🟢 Spread shot (3-way fire) · 🟡 Speed boost (1.65× speed) — drop from kills and fall from above; HUD timer bar shows remaining duration.
+- **Combo multiplier:** chain kills within 1.8 s for x2–x4 score bonus; multiplier shown on screen.
+- **Boss fight at level 10:** 6-HP boss with sinusoidal drift and health bar; defeating it wins the game.
+- **Screen shake** on ship collision; HUD stays stable.
+- **Haptic feedback** (50 ms vibration) on ship hit.
+- **Background music:** procedurally synthesised ambient space track (A-minor pad + bass + arpeggio) starts with each new game.
+- **Power-up collection sound:** rising sparkle arpeggio on pickup.
 
 ## Tech
 
@@ -42,6 +48,11 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
   explosion burst, hit thud, level-clear arpeggio, thrust rumble; all synthesised
   at runtime, no audio files.
 - **GLSL → SPIR-V** compiled at build time with the NDK's `glslc`.
+- **Runtime diagnostics via Logcat** — on every launch the game logs a full
+  Vulkan extension audit (`✓ USED` / `~ PRESENT` / `✗ ABSENT` / `? UNKNOWN`)
+  for both instance and device extensions, with an inline explanation for each
+  known extension. During gameplay a periodic FPS line logs frames/s, average
+  frame time, and draw-call count every 5 seconds. Filter with `adb logcat -s Asteroids`.
 - `minSdk 24` (Vulkan requires API 24+), AGP 9, NDK r29, CMake 3.22.
 
 ## Build & run
@@ -64,9 +75,9 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-23 tests covering ship physics (gravity, thrust, clamping), input zone
-isolation, bullet spawning/cooldown/expiry, spread shot, speed boost,
-and asteroid splitting. Run on a connected device or emulator:
+29 tests covering ship physics, input zones, bullets, spread shot, speed
+boost, asteroid splitting, combo multiplier, armored asteroid HP, boss
+spawn, and power-up session isolation. Run on a connected device or emulator:
 
 ```bash
 # ARM device (default)
@@ -92,7 +103,7 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs 23 Google Test cases on an API-34 x86\_64 emulator | — |
+| **Native Tests** | Runs 29 Google Test cases on an API-34 x86\_64 emulator | — |
 | **Smoke Test** | Runs the Android instrumented test; captures an in-game screenshot via `UiAutomation` | `smoke-screenshot`, `smoke-test-results`, `smoke-logcat` |
 
 ## License

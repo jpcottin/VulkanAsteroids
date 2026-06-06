@@ -201,10 +201,12 @@ void Game::startGame() {
     lives_ = 3;
     newHighScore_     = false;
     newHighScoreRank_ = -1;
+    comboCount_ = 0; comboTimer_ = 0.0f; comboDisplayTimer_ = 0.0f;
     // Reset power-ups fully on new game (they only carry across levels, not sessions).
     shieldActive_ = false;    shieldTimer_     = 0.0f;
     spreadActive_ = false;    spreadTimer_     = 0.0f;
     speedBoostActive_ = false; speedBoostTimer_ = 0.0f;
+    if (audio_) audio_->setMusicEnabled(true);
     startLevel(1);
 }
 
@@ -220,15 +222,18 @@ void Game::startLevel(int level) {
     shipVy_ = 0.0f;
     shipTilt_ = 0.0f;
     fireCooldown_ = 0.0f;
-    invuln_ = 1.2f;        // brief grace at level start
+    invuln_ = 1.2f;
     asteroids_.clear();
     bullets_.clear();
     particles_.clear();
     explosions_.clear();
     powerUps_.clear();
+    bossActive_ = false;
+    boss_ = {};
     // Power-up state intentionally NOT reset — bonuses carry across levels.
     powerUpSpawnTimer_ = 12.0f;
     shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f;
+    if (level_ == 10) spawnBoss();
     state_ = PLAYING;
 }
 
@@ -246,22 +251,59 @@ void Game::spawnAsteroid(bool ambient) {
     a.cg = 0.55f + tint * 0.6f;
     a.cb = 0.48f + tint * 0.4f;
     a.gen = 0;
+    a.type = AT_NORMAL;
+    a.hp   = 1;
+
+    // Higher levels introduce fast and armored variants.
+    if (!ambient && level_ >= 7 && frand() < 0.18f + 0.02f * (level_ - 7)) {
+        a.type = AT_ARMORED;
+        a.hp   = 2;
+        a.r   *= 1.15f;
+        a.vy  *= 0.80f;
+        a.cr   = 0.45f + tint; a.cg = 0.22f + tint * 0.3f; a.cb = 0.18f + tint * 0.2f;
+    } else if (!ambient && level_ >= 5 && frand() < 0.18f + 0.03f * (level_ - 5)) {
+        a.type = AT_FAST;
+        a.hp   = 1;
+        a.r   *= 0.72f;
+        a.vy  *= 1.65f;
+        a.vx   = frange(-0.25f, 0.25f);
+        a.spin *= 2.0f;
+        a.cr   = 0.85f + tint; a.cg = 0.82f + tint; a.cb = 0.72f + tint;
+    }
+
     a.alive = true;
     asteroids_.push_back(a);
+}
+
+void Game::spawnBoss() {
+    boss_.x    = 0.0f;
+    boss_.y    = -1.35f;
+    boss_.vy   = 0.10f;
+    boss_.t    = 0.0f;
+    boss_.rot  = 0.0f;
+    boss_.spin = 0.25f;
+    boss_.r    = 0.22f;
+    boss_.hp   = boss_.maxHp = 6;
+    boss_.alive = true;
+    bossActive_ = true;
+    // Boss replaces normal asteroid spawning at level 10.
+    spawnInterval_ = 999.0f;
 }
 
 void Game::splitAsteroid(const Asteroid& a) {
     for (int k = 0; k < 2; k++) {
         Asteroid child;
-        child.r   = a.r * 0.55f;
-        child.x   = a.x + (k == 0 ? -1.0f : 1.0f) * a.r * 0.45f;
-        child.y   = a.y;
-        child.vx  = (k == 0 ? -1.0f : 1.0f) * frange(0.18f, 0.40f);
-        child.vy  = a.vy * frange(0.85f, 1.25f);
+        child.r    = a.r * 0.55f;
+        child.x    = a.x + (k == 0 ? -1.0f : 1.0f) * a.r * 0.45f;
+        child.y    = a.y;
+        child.vx   = (k == 0 ? -1.0f : 1.0f) * frange(0.18f, 0.40f);
+        child.vy   = a.vy * frange(0.85f, 1.25f);
         child.spin = frange(-3.5f, 3.5f);
         child.rot  = frange(0.0f, 6.28f);
         child.cr = a.cr; child.cg = a.cg; child.cb = a.cb;
-        child.gen = a.gen + 1;
+        child.gen  = a.gen + 1;
+        child.type = AT_NORMAL;  // split children are never armored — visual promise matches HP
+        child.hp   = 1;
         child.alive = true;
         asteroids_.push_back(child);
     }
@@ -339,6 +381,10 @@ void Game::update(float dt) {
             // Audio: sync thrust sound each frame
             if (audio_) audio_->setThrust(thrustHeld());
 
+            // Combo decay
+            if (comboTimer_ > 0.0f) { comboTimer_ -= dt; if (comboTimer_ <= 0.0f) comboCount_ = 0; }
+            if (comboDisplayTimer_ > 0.0f) comboDisplayTimer_ -= dt;
+
             // Power-up timers
             if (shieldActive_)     { shieldTimer_     -= dt; if (shieldTimer_     <= 0) shieldActive_     = false; }
             if (spreadActive_)     { spreadTimer_     -= dt; if (spreadTimer_     <= 0) spreadActive_     = false; }
@@ -361,13 +407,47 @@ void Game::update(float dt) {
                 float dx = pu.x - shipX_, dy = pu.y - shipY_;
                 if (dx*dx + dy*dy < (puR + shipR_) * (puR + shipR_)) {
                     pu.alive = false;
-                    if (pu.type == PU_SHIELD)      { shieldActive_ = true;     shieldTimer_     = 8.0f; }
-                    else if (pu.type == PU_SPREAD)  { spreadActive_ = true;     spreadTimer_     = 8.0f; }
-                    else                            { speedBoostActive_ = true; speedBoostTimer_ = 8.0f; }
+                    if (pu.type == PU_SHIELD)      { shieldActive_ = true;     shieldTimer_     = kPowerUpDuration; }
+                    else if (pu.type == PU_SPREAD)  { spreadActive_ = true;     spreadTimer_     = kPowerUpDuration; }
+                    else                            { speedBoostActive_ = true; speedBoostTimer_ = kPowerUpDuration; }
+                    if (audio_) audio_->triggerPowerUp();
                 }
             }
             for (size_t i = powerUps_.size(); i-- > 0;)
                 if (!powerUps_[i].alive) powerUps_.erase(powerUps_.begin() + i);
+
+            // Boss update (level 10)
+            if (bossActive_ && boss_.alive) {
+                boss_.t   += dt;
+                boss_.y   += boss_.vy * dt;
+                boss_.rot += boss_.spin * dt;
+                boss_.x    = sinf(boss_.t * 0.70f) * asp_ * 0.62f;
+                if (invuln_ <= 0.0f) {
+                    float bdx = boss_.x - shipX_, bdy = boss_.y - shipY_;
+                    if (bdx*bdx + bdy*bdy < (boss_.r + shipR_) * (boss_.r + shipR_)) {
+                        if (shieldActive_) {
+                            shieldActive_ = false; shieldTimer_ = 0.0f;
+                            shakeAmt_ = 0.5f;
+                        } else {
+                            lives_--;
+                            invuln_ = 1.5f;
+                            shakeAmt_ = 1.0f;
+                            comboCount_ = 0; comboTimer_ = 0.0f;
+                            if (audio_) audio_->triggerPlayerHit();
+                            if (haptic_) haptic_();
+                            Explosion flash;
+                            flash.x = shipX_; flash.y = shipY_; flash.radius = shipScale_;
+                            flash.t = 0.0f; flash.maxLife = 0.18f;
+                            flash.cr = 0.45f; flash.cg = 0.9f; flash.cb = 1.0f;
+                            flash.alive = true;
+                            explosions_.push_back(flash);
+                            if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
+                        }
+                    }
+                }
+                // Boss wraps back from bottom to top so it stays on screen permanently
+                if (boss_.y - boss_.r > 1.1f) boss_.y = -1.1f - boss_.r;
+            }
 
             // Horizontal movement + tilt
             int dir = (rightHeld() ? 1 : 0) - (leftHeld() ? 1 : 0);
@@ -409,14 +489,15 @@ void Game::update(float dt) {
                         a.alive = false;
                         spawnDebris(a.x, a.y, a.r, a.cr, a.cg, a.cb);
                         if (shieldActive_) {
-                            // Shield absorbs the hit — consume it, no life lost
                             shieldActive_ = false; shieldTimer_ = 0.0f;
                             shakeAmt_ = 0.5f;
                         } else {
                             lives_--;
                             invuln_ = 1.5f;
                             shakeAmt_ = 1.0f;
+                            comboCount_ = 0; comboTimer_ = 0.0f;
                             if (audio_) audio_->triggerPlayerHit();
+                            if (haptic_) haptic_();
                             Explosion shipFlash;
                             shipFlash.x = shipX_; shipFlash.y = shipY_;
                             shipFlash.radius = shipScale_;
@@ -428,10 +509,13 @@ void Game::update(float dt) {
                         }
                     }
                 }
-                if (a.alive && a.y - a.r > 1.05f) {
+                if (a.alive && (a.y - a.r > 1.05f ||
+                               a.x - a.r > asp_ + 0.05f || a.x + a.r < -asp_ - 0.05f)) {
                     a.alive = false;
-                    dodgedThisLevel_++;
-                    score_ += 5 * level_;
+                    if (a.y - a.r > 1.05f) {  // only award dodge score for bottom exit
+                        dodgedThisLevel_++;
+                        score_ += 5 * level_;
+                    }
                 }
             }
 
@@ -464,13 +548,60 @@ void Game::update(float dt) {
                 if (b.x < -asp_ - 0.1f || b.x > asp_ + 0.1f || b.y < -1.15f || b.life <= 0.0f) {
                     b.alive = false; continue;
                 }
+
+                // Bullet vs boss
+                if (bossActive_ && boss_.alive) {
+                    float bdx = b.x - boss_.x, bdy = b.y - boss_.y;
+                    if (bdx*bdx + bdy*bdy < (boss_.r + 0.012f) * (boss_.r + 0.012f)) {
+                        b.alive = false;
+                        boss_.hp--;
+                        // Partial-hit flash
+                        Explosion hitFlash;
+                        hitFlash.x = boss_.x; hitFlash.y = boss_.y;
+                        hitFlash.radius = boss_.r * 0.4f;
+                        hitFlash.t = 0.0f; hitFlash.maxLife = 0.12f;
+                        hitFlash.cr = 1.0f; hitFlash.cg = 0.6f; hitFlash.cb = 0.1f;
+                        hitFlash.alive = true;
+                        explosions_.push_back(hitFlash);
+                        if (boss_.hp <= 0) {
+                            boss_.alive = false;
+                            if (audio_) audio_->triggerExplosion();
+                            spawnDebris(boss_.x, boss_.y, boss_.r * 1.5f, 0.9f, 0.55f, 0.15f);
+                            spawnDebris(boss_.x, boss_.y, boss_.r,        0.8f, 0.40f, 0.10f);
+                            score_ += 50 * level_;
+                            state_ = WIN; stateTimer_ = 0.0f; checkHighScore();
+                        }
+                        continue;
+                    }
+                }
+
+                // Bullet vs asteroids
                 for (auto& a : asteroids_) {
                     if (!a.alive) continue;
                     float dx = b.x - a.x, dy = b.y - a.y;
                     if (dx * dx + dy * dy < (a.r + 0.012f) * (a.r + 0.012f)) {
                         b.alive = false;
+                        a.hp--;
+                        if (a.hp > 0) {
+                            // Armored hit — flash but don't destroy yet
+                            Explosion e;
+                            e.x = a.x; e.y = a.y; e.radius = a.r * 0.35f;
+                            e.t = 0.0f; e.maxLife = 0.10f;
+                            e.cr = 1.0f; e.cg = 0.7f; e.cb = 0.2f; e.alive = true;
+                            explosions_.push_back(e);
+                            break;
+                        }
                         a.alive = false;
-                        score_ += 10 * level_;
+                        // Update combo
+                        if (comboTimer_ > 0.0f) {
+                            comboCount_ = comboCount_ < 4 ? comboCount_ + 1 : 4;
+                        } else {
+                            comboCount_ = 1;
+                        }
+                        comboTimer_        = 1.8f;
+                        comboDisplayTimer_ = 0.9f;
+                        long baseScore = 10L * level_;
+                        score_ += baseScore * comboCount_;
                         dodgedThisLevel_++;
                         if (audio_) audio_->triggerExplosion();
                         // Copy before push_backs: splitAsteroid/spawnPowerUp may reallocate
@@ -490,7 +621,8 @@ void Game::update(float dt) {
             for (size_t i = bullets_.size(); i-- > 0;)
                 if (!bullets_[i].alive) bullets_.erase(bullets_.begin() + i);
 
-            if (state_ == PLAYING && dodgedThisLevel_ >= goal_) {
+            // Level clear: level 10 is cleared only by defeating the boss.
+            if (state_ == PLAYING && dodgedThisLevel_ >= goal_ && level_ < 10) {
                 score_ += 100 * level_;
                 state_ = LEVEL_CLEAR;
                 if (audio_) audio_->triggerLevelClear();
@@ -521,7 +653,11 @@ void Game::update(float dt) {
                 spawnTimer_ -= dt;
                 if (spawnTimer_ <= 0.0f) { spawnAsteroid(true); spawnTimer_ = 0.9f; }
             }
-            if (tapped && stateTimer_ > 0.6f) { state_ = TITLE; asteroids_.clear(); }
+            if (tapped && stateTimer_ > 0.6f) {
+                state_ = TITLE;
+                asteroids_.clear();
+                if (audio_) audio_->setMusicEnabled(false);
+            }
             break;
         }
     }
@@ -654,6 +790,61 @@ void Game::drawText(std::vector<DrawCmd>& out, const char* text, float cx, float
     }
 }
 
+void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
+    // Left-side HUD: stacked power-up indicators with timer bars.
+    // Each row: small diamond icon + horizontal timer bar.
+    struct PU { bool active; float timer; float r, g, b; } pus[3] = {
+        { shieldActive_,    shieldTimer_,     0.30f, 0.55f, 1.00f },
+        { spreadActive_,    spreadTimer_,     0.25f, 1.00f, 0.40f },
+        { speedBoostActive_,speedBoostTimer_, 1.00f, 0.85f, 0.10f },
+    };
+    float iconX = -asp_ + 0.055f;
+    float barX0 = -asp_ + 0.095f;
+    float barMaxW = 0.16f;
+    for (int i = 0; i < 3; i++) {
+        if (!pus[i].active) continue;
+        float y  = -0.70f + i * 0.11f;
+        float progress = pus[i].timer / kPowerUpDuration;
+        float pulse = (pus[i].timer < 2.0f) ? (0.5f + 0.5f * sinf(animTime_ * 18.0f)) : 1.0f;
+        // Icon diamond
+        emit(out, SHAPE_QUAD, iconX, y, 0.020f, 0.020f, 0.785f,
+             pus[i].r, pus[i].g, pus[i].b, pulse);
+        // Timer bar background
+        emit(out, SHAPE_QUAD, barX0 + barMaxW * 0.5f, y, barMaxW * 0.5f, 0.006f, 0.0f,
+             pus[i].r * 0.3f, pus[i].g * 0.3f, pus[i].b * 0.3f, 0.5f);
+        // Timer bar fill
+        float fillW = barMaxW * progress;
+        if (fillW > 0.002f)
+            emit(out, SHAPE_QUAD, barX0 + fillW * 0.5f, y, fillW * 0.5f, 0.006f, 0.0f,
+                 pus[i].r, pus[i].g, pus[i].b, 0.85f);
+    }
+}
+
+void Game::drawComboIndicator(std::vector<DrawCmd>& out) {
+    if (comboDisplayTimer_ <= 0.0f || comboCount_ < 2) return;
+    float alpha = comboDisplayTimer_ / 0.9f;
+    float h  = 0.075f + 0.015f * (1.0f - alpha); // slightly grows then fades
+    float step = h * 0.95f;
+    float cx = 0.0f; // center of screen
+    // Draw "x" then digit, e.g. "x3"
+    drawLetter(out, 'X', cx - step * 0.5f, 0.62f, h, 1.0f, 0.85f, 0.10f, alpha);
+    drawDigit(out, comboCount_, cx + step * 0.5f, 0.62f, h * 1.2f, 1.0f, 0.85f, 0.10f, alpha);
+}
+
+void Game::drawBossHealthBar(std::vector<DrawCmd>& out) {
+    if (!bossActive_ || !boss_.alive) return;
+    float progress = (float)boss_.hp / (float)boss_.maxHp;
+    float barW = asp_ * 0.80f;
+    float y    = -0.84f;
+    // Background
+    emit(out, SHAPE_QUAD, 0.0f, y, barW, 0.012f, 0.0f, 0.25f, 0.05f, 0.05f, 0.7f);
+    // Fill (red → orange → yellow based on health)
+    float fr = 1.0f, fg = 0.15f + 0.70f * progress, fb = 0.0f;
+    emit(out, SHAPE_QUAD, -barW + barW * progress, y, barW * progress, 0.012f, 0.0f, fr, fg, fb, 0.9f);
+    // "BOSS" label using stroke letters
+    drawText(out, "BOSS", 0.0f, y - 0.045f, 0.038f, fr, fg, fb, 0.85f);
+}
+
 void Game::render(std::vector<DrawCmd>& out) {
     // far stars (dim, slow)
     for (auto& s : stars_)
@@ -664,9 +855,26 @@ void Game::render(std::vector<DrawCmd>& out) {
         emit(out, SHAPE_QUAD, s.x * asp_, s.y, s.size, s.size, 0.0f,
              0.85f, 0.88f, 1.00f, 0.90f);
 
-    // asteroids
-    for (auto& a : asteroids_)
+    // asteroids — armored ones get a brighter outline ring to signal extra HP
+    for (auto& a : asteroids_) {
         emit(out, SHAPE_ASTEROID, a.x, a.y, a.r, a.r, a.rot, a.cr, a.cg, a.cb, 1.0f);
+        if (a.type == AT_ARMORED && a.hp > 0) {
+            float pulse = 0.55f + 0.35f * sinf(animTime_ * 5.0f);
+            emit(out, SHAPE_ASTEROID, a.x, a.y, a.r * 1.22f, a.r * 1.22f, -a.rot,
+                 0.95f, 0.55f, 0.15f, pulse * 0.45f);
+        }
+    }
+
+    // boss — two concentric rings so it reads differently from regular asteroids
+    if (bossActive_ && boss_.alive) {
+        float bpulse = 0.7f + 0.3f * sinf(animTime_ * 3.0f);
+        emit(out, SHAPE_ASTEROID, boss_.x, boss_.y, boss_.r, boss_.r, boss_.rot,
+             0.75f, 0.20f, 0.10f, 1.0f);
+        emit(out, SHAPE_ASTEROID, boss_.x, boss_.y, boss_.r * 0.65f, boss_.r * 0.65f,
+             -boss_.rot * 1.5f, 0.95f, 0.45f, 0.10f, 0.9f);
+        emit(out, SHAPE_ASTEROID, boss_.x, boss_.y, boss_.r * 1.15f, boss_.r * 1.15f,
+             boss_.rot * 0.7f, 1.0f, 0.30f, 0.05f, bpulse * 0.35f);
+    }
 
     // power-ups: rotating diamond with glow halo
     for (auto& pu : powerUps_) {
@@ -777,6 +985,17 @@ void Game::render(std::vector<DrawCmd>& out) {
                  0.28f, 0.72f, 0.92f, 1.0f);
         }
 
+        drawPowerUpHUD(out);
+        drawBossHealthBar(out);
+
+        shakeX_ = savedShakeX; shakeY_ = savedShakeY;
+    }
+
+    // Combo indicator — shake-free, centered on screen.
+    if (state_ == PLAYING || state_ == LEVEL_CLEAR) {
+        float savedShakeX = shakeX_, savedShakeY = shakeY_;
+        shakeX_ = 0.0f; shakeY_ = 0.0f;
+        drawComboIndicator(out);
         shakeX_ = savedShakeX; shakeY_ = savedShakeY;
     }
 
@@ -829,7 +1048,7 @@ void Game::render(std::vector<DrawCmd>& out) {
             // Score
             drawNumber(out, (int)highScores_[i].score, -asp_*0.50f, rowY[i], hh, pr, pg, pb, 1.0f);
             // Level digit (right-aligned)
-            drawDigit(out, highScores_[i].level, asp_*0.62f, rowY[i], hh, pr, pg, pb, 0.80f);
+            drawNumber(out, highScores_[i].level, asp_*0.62f, rowY[i], hh, pr, pg, pb, 0.80f);
         }
 
         // pulsing tap hint
