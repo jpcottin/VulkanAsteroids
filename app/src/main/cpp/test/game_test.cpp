@@ -169,3 +169,101 @@ TEST(Bullets, BulletsExpireOffScreen) {
     for (int i = 0; i < 50; i++) g.update(0.05f);  // 2.5 s > kBulletLife (2.2 s)
     EXPECT_EQ(g.bulletCount(), 0);
 }
+
+// ── Spread shot ────────────────────────────────────────────────────────────────
+
+TEST(SpreadShot, NormalFireSpawnsOneBullet) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, kFireX, kFireY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.bulletCount(), 1);
+}
+
+TEST(SpreadShot, SpreadFireSpawnsThreeBullets) {
+    Game g;
+    startPlaying(g);
+    g.activatePowerUpForTest(1);  // spread
+    g.onPointerDown(0, kFireX, kFireY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.bulletCount(), 3);
+}
+
+TEST(SpreadShot, SpreadCooldownStillLimitsRapidFire) {
+    Game g;
+    startPlaying(g);
+    g.activatePowerUpForTest(1);
+    g.onPointerDown(0, kFireX, kFireY);
+    g.update(0.016f);  // fires 3
+    int after1 = g.bulletCount();
+    g.update(0.016f);  // still within cooldown — no new bullets
+    int after2 = g.bulletCount();
+    g.onPointerUp(0);
+    EXPECT_EQ(after1, after2);
+}
+
+// ── Speed boost ────────────────────────────────────────────────────────────────
+
+TEST(SpeedBoost, BoostedShipMovesMoreThanUnboosted) {
+    // Unboosted displacement
+    Game g1;
+    startPlaying(g1);
+    g1.update(1.0f);  // let ship settle
+    float x0 = g1.shipX();
+    g1.onPointerDown(0, kRightX, kMidY);
+    g1.update(0.3f);
+    g1.onPointerUp(0);
+    float dx_normal = g1.shipX() - x0;
+
+    // Boosted displacement (same conditions + speed power-up)
+    Game g2;
+    startPlaying(g2);
+    g2.update(1.0f);
+    g2.activatePowerUpForTest(2);  // speed boost
+    float x0b = g2.shipX();
+    g2.onPointerDown(0, kRightX, kMidY);
+    g2.update(0.3f);
+    g2.onPointerUp(0);
+    float dx_boosted = g2.shipX() - x0b;
+
+    EXPECT_GT(dx_boosted, dx_normal);
+}
+
+// ── Asteroid splitting ─────────────────────────────────────────────────────────
+
+TEST(Splitting, LargeAsteroidSplitsIntoTwo) {
+    Game g;
+    startPlaying(g);
+    // Inject a gen-0 asteroid just above the bullet's travel path.
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.08f, 0);
+    ASSERT_EQ(g.asteroidCount(), 1);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);  // ~80 ms for bullet to travel
+    g.onPointerUp(0);
+    // Original dies, 2 children spawned.
+    EXPECT_EQ(g.asteroidCount(), 2);
+}
+
+TEST(Splitting, SmallAsteroidDoesNotSplit) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);  // gen=2: no split
+    ASSERT_EQ(g.asteroidCount(), 1);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.asteroidCount(), 0);
+}
+
+TEST(Splitting, MediumAsteroidSplitsOnce) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.07f, 1);  // gen=1: splits to gen-2 children
+    ASSERT_EQ(g.asteroidCount(), 1);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.asteroidCount(), 2);
+}
