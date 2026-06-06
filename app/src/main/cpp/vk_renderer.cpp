@@ -33,6 +33,93 @@ struct Push {
         }                                                              \
     } while (0)
 
+// Enumerate and categorise every Vulkan extension the driver exposes.
+// Three buckets:
+//   USED    – enabled by this renderer
+//   PRESENT – driver has it, renderer doesn't enable it (why noted inline)
+//   ABSENT  – renderer knows about it but this driver doesn't provide it
+static void logExtensionAudit(VkPhysicalDevice phys) {
+    struct KnownExt { const char* name; bool used; const char* note; };
+
+    // ── Instance extensions ──────────────────────────────────────────────────
+    static const KnownExt kInstKnown[] = {
+        {"VK_KHR_surface",                        true,  "required — abstract surface type"},
+        {"VK_KHR_android_surface",                true,  "required — ANativeWindow swapchain"},
+        {"VK_EXT_debug_utils",                    false, "debug labels/markers — not enabled in this build"},
+        {"VK_KHR_get_physical_device_properties2",false, "extended device queries — Vulkan 1.1 core, not needed"},
+        {"VK_EXT_swapchain_colorspace",           false, "HDR / wide-gamut display — game uses sRGB only"},
+        {"VK_KHR_external_memory_capabilities",   false, "cross-process memory — not used"},
+    };
+
+    uint32_t n = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> instExts(n);
+    vkEnumerateInstanceExtensionProperties(nullptr, &n, instExts.data());
+
+    auto instHas = [&](const char* name) {
+        for (auto& e : instExts) if (strcmp(e.extensionName, name) == 0) return true;
+        return false;
+    };
+
+    LOGI("─── Vulkan Instance Extension Audit (%u available) ───", n);
+    for (auto& k : kInstKnown) {
+        bool present = instHas(k.name);
+        if (k.used)         LOGI("  ✓ USED     %-52s %s", k.name, k.note);
+        else if (present)   LOGI("  ~ PRESENT  %-52s %s", k.name, k.note);
+        else                LOGI("  ✗ ABSENT   %-52s %s", k.name, k.note);
+    }
+    // Log anything the driver exposes that isn't in our known table
+    for (auto& e : instExts) {
+        bool known = false;
+        for (auto& k : kInstKnown) if (strcmp(e.extensionName, k.name) == 0) { known = true; break; }
+        if (!known) LOGI("  ? UNKNOWN  %s", e.extensionName);
+    }
+
+    // ── Device extensions ────────────────────────────────────────────────────
+    static const KnownExt kDevKnown[] = {
+        {"VK_KHR_swapchain",                                true,  "required — present images to display"},
+        {"VK_KHR_maintenance1",                             false, "negative-height viewports — not needed (Y already flipped in shader)"},
+        {"VK_KHR_maintenance2",                             false, "input attachment read fixes — no input attachments used"},
+        {"VK_KHR_maintenance3",                             false, "large descriptor sets — single small push-constant layout only"},
+        {"VK_KHR_dedicated_allocation",                     false, "per-resource memory — single vertex buffer, not worth it"},
+        {"VK_KHR_get_memory_requirements2",                 false, "pairs with dedicated_allocation — same reason"},
+        {"VK_EXT_memory_budget",                            false, "heap budget queries — renderer allocates once at startup"},
+        {"VK_KHR_dynamic_rendering",                        false, "renderpass-free rendering — using classic render passes"},
+        {"VK_KHR_buffer_device_address",                    false, "GPU-side pointers — no indirect/ray-tracing workloads"},
+        {"VK_EXT_descriptor_indexing",                      false, "bindless textures — no textures in this renderer"},
+        {"VK_KHR_timeline_semaphore",                       false, "timeline sync — using binary semaphores, sufficient here"},
+        {"VK_KHR_synchronization2",                         false, "enhanced barriers — simple pipeline, not needed"},
+        {"VK_EXT_robustness2",                              false, "null descriptor robustness — trusted internal geometry only"},
+        {"VK_ANDROID_external_memory_android_hardware_buffer",false,"AHardwareBuffer interop — no camera/media pipeline"},
+        {"VK_KHR_shader_non_semantic_info",                 false, "shader printf/debug — not used in release shaders"},
+        {"VK_EXT_memory_priority",                          false, "eviction hints — single allocation, trivial footprint"},
+    };
+
+    uint32_t dn = 0;
+    vkEnumerateDeviceExtensionProperties(phys, nullptr, &dn, nullptr);
+    std::vector<VkExtensionProperties> devExts(dn);
+    vkEnumerateDeviceExtensionProperties(phys, nullptr, &dn, devExts.data());
+
+    auto devHas = [&](const char* name) {
+        for (auto& e : devExts) if (strcmp(e.extensionName, name) == 0) return true;
+        return false;
+    };
+
+    LOGI("─── Vulkan Device Extension Audit (%u available) ────", dn);
+    for (auto& k : kDevKnown) {
+        bool present = devHas(k.name);
+        if (k.used)         LOGI("  ✓ USED     %-56s %s", k.name, k.note);
+        else if (present)   LOGI("  ~ PRESENT  %-56s %s", k.name, k.note);
+        else                LOGI("  ✗ ABSENT   %-56s %s", k.name, k.note);
+    }
+    for (auto& e : devExts) {
+        bool known = false;
+        for (auto& k : kDevKnown) if (strcmp(e.extensionName, k.name) == 0) { known = true; break; }
+        if (!known) LOGI("  ? UNKNOWN  %s", e.extensionName);
+    }
+    LOGI("─────────────────────────────────────────────────────");
+}
+
 bool VkRenderer::initInstance() {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "Vulkan Asteroids";
@@ -98,7 +185,12 @@ bool VkRenderer::ensureDevice() {
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(phys_, &props);
-    LOGI("Using GPU: %s", props.deviceName);
+    LOGI("Using GPU: %s (Vulkan %d.%d.%d)",
+         props.deviceName,
+         VK_VERSION_MAJOR(props.apiVersion),
+         VK_VERSION_MINOR(props.apiVersion),
+         VK_VERSION_PATCH(props.apiVersion));
+    logExtensionAudit(phys_);
 
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};

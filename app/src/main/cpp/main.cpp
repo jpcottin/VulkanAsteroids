@@ -2,11 +2,55 @@
 #include <android/input.h>
 #include <time.h>
 #include <vector>
+#include <jni.h>
+#include <thread>
 
 #include "common.h"
 #include "vk_renderer.h"
 #include "game.h"
 #include "audio.h"
+
+// Trigger a 50 ms haptic pulse on a detached thread so the game loop never blocks.
+static void triggerHaptic(android_app* app) {
+    JavaVM* vm = app->activity->vm;
+    jobject activityRef = app->activity->clazz;
+
+    std::thread([vm, activityRef]() {
+        JNIEnv* env = nullptr;
+        vm->AttachCurrentThread(&env, nullptr);
+        if (!env) return;
+
+        jclass  cls        = env->GetObjectClass(activityRef);
+        jstring svcStr     = env->NewStringUTF("vibrator");
+        jmethodID getSvc   = env->GetMethodID(cls, "getSystemService",
+                                              "(Ljava/lang/String;)Ljava/lang/Object;");
+        jobject vibrator   = env->CallObjectMethod(activityRef, getSvc, svcStr);
+        env->DeleteLocalRef(svcStr);
+
+        if (vibrator) {
+            jclass vibCls = env->GetObjectClass(vibrator);
+            jclass veCls  = env->FindClass("android/os/VibrationEffect");
+            if (veCls) {
+                jmethodID create    = env->GetStaticMethodID(veCls, "createOneShot",
+                                                             "(JI)Landroid/os/VibrationEffect;");
+                jmethodID doVibrate = env->GetMethodID(vibCls, "vibrate",
+                                                       "(Landroid/os/VibrationEffect;)V");
+                if (create && doVibrate) {
+                    jobject effect = env->CallStaticObjectMethod(veCls, create,
+                                                                 (jlong)50, (jint)-1);
+                    env->CallVoidMethod(vibrator, doVibrate, effect);
+                    // Clear any SecurityException (missing VIBRATE permission) so
+                    // the thread exits cleanly instead of crashing the process.
+                    env->ExceptionClear();
+                    env->DeleteLocalRef(effect);
+                }
+                env->DeleteLocalRef(veCls);
+            }
+            env->DeleteLocalRef(vibrator);
+        }
+        vm->DetachCurrentThread();
+    }).detach();
+}
 
 struct Engine {
     android_app* app = nullptr;
@@ -92,6 +136,7 @@ void android_main(android_app* app) {
 
     engine.instanceReady = engine.renderer.initInstance();
     engine.game.setDataPath(app->activity->internalDataPath);
+    engine.game.setHapticCallback([app]() { triggerHaptic(app); });
     engine.lastTime = now_s();
 
     while (true) {
@@ -120,6 +165,19 @@ void android_main(android_app* app) {
             float clear[3];
             engine.game.clearColor(clear);
             engine.renderer.drawFrame(cmds, clear);
+
+            static float fpsAccum  = 0.0f;
+            static int   fpsFrames = 0;
+            fpsAccum  += dt;
+            fpsFrames += 1;
+            if (fpsAccum >= 5.0f) {
+                LOGI("FPS: %.1f  |  avg frame: %.2f ms  |  draws/frame: %zu",
+                     fpsFrames / fpsAccum,
+                     fpsAccum / fpsFrames * 1000.0f,
+                     cmds.size());
+                fpsAccum  = 0.0f;
+                fpsFrames = 0;
+            }
         }
     }
 }

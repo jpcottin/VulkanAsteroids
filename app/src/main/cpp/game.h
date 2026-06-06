@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <functional>
 #include "common.h"
 
 class AudioEngine;
@@ -23,13 +24,19 @@ public:
     void render(std::vector<DrawCmd>& out);
     void clearColor(float out[3]) const;
 
+public:
+    // Exposed so tests can construct specific asteroid variants.
+    enum AsteroidType { AT_NORMAL = 0, AT_FAST = 1, AT_ARMORED = 2 };
+
 private:
     enum State { TITLE, PLAYING, LEVEL_CLEAR, GAME_OVER, WIN };
 
     struct Asteroid {
         float x, y, vx, vy, r, rot, spin;
         float cr, cg, cb;
-        int gen;    // 0=large (splits), 1=medium (splits), 2=small (no split)
+        int gen;          // 0=large (splits), 1=medium (splits), 2=small (no split)
+        int hp;           // hit points: 1 normal/fast, 2 armored
+        AsteroidType type;
         bool alive;
     };
     struct Bullet { float x, y, vx, vy, life; bool alive; };
@@ -57,6 +64,13 @@ private:
         bool alive;
     };
 
+    // Level-10 boss: large multi-HP asteroid with sinusoidal drift.
+    struct Boss {
+        float x, y, vy, t, rot, spin, r;
+        int   hp, maxHp;
+        bool  alive;
+    };
+
     static const int kMaxScores = 5;
 
     // --- helpers ---
@@ -67,6 +81,7 @@ private:
     void spawnAsteroid(bool ambient);
     void splitAsteroid(const Asteroid& parent);
     void spawnPowerUp(float x, float y);
+    void spawnBoss();
     bool leftHeld() const;
     bool rightHeld() const;
     bool thrustHeld() const;
@@ -87,10 +102,16 @@ private:
                     float h, float r, float g, float b, float a);
     void drawText(std::vector<DrawCmd>& out, const char* text, float cx, float cy,
                   float h, float r, float g, float b, float a);
+    void drawPowerUpHUD(std::vector<DrawCmd>& out);
+    void drawComboIndicator(std::vector<DrawCmd>& out);
+    void drawBossHealthBar(std::vector<DrawCmd>& out);
     int numDigits(int v) const;
 
     // --- audio ---
     AudioEngine* audio_ = nullptr;
+
+    // --- haptic ---
+    std::function<void()> haptic_;
 
     // --- high scores ---
     HighScore highScores_[kMaxScores] = {};
@@ -101,6 +122,7 @@ private:
 public:
     void setAudioEngine(AudioEngine* a) { audio_ = a; }
     void setDataPath(const char* path);
+    void setHapticCallback(std::function<void()> fn) { haptic_ = std::move(fn); }
 
     // --- test / debug accessors ---
 public:
@@ -114,6 +136,7 @@ public:
     }
     long  score() const { return score_; }
     int   lives() const { return lives_; }
+    int   combo() const { return comboCount_; }
 
 #ifndef NDEBUG
     // Test-only helpers — excluded from release builds (NDEBUG defined).
@@ -122,18 +145,21 @@ public:
         if (type == 1) { spreadActive_ = true;     spreadTimer_     = 10.0f; }
         if (type == 2) { speedBoostActive_ = true; speedBoostTimer_ = 10.0f; }
     }
-    void spawnTestAsteroid(float x, float y, float r, int gen) {
+    void spawnTestAsteroid(float x, float y, float r, int gen,
+                           AsteroidType type = AT_NORMAL, int hp = 1) {
         Asteroid a;
         a.x = x; a.y = y; a.vx = 0; a.vy = 0;
         a.r = r; a.rot = 0; a.spin = 0;
         a.cr = 0.6f; a.cg = 0.5f; a.cb = 0.4f;
-        a.gen = gen; a.alive = true;
+        a.gen = gen; a.hp = hp; a.type = type; a.alive = true;
         asteroids_.push_back(a);
     }
     bool shieldActiveForTest()     const { return shieldActive_; }
     bool spreadActiveForTest()     const { return spreadActive_; }
     bool speedBoostActiveForTest() const { return speedBoostActive_; }
     void triggerNewGameForTest()         { startGame(); }
+    bool bossAliveForTest()        const { return boss_.alive; }
+    int  bossHpForTest()           const { return boss_.hp; }
 #endif
 
 private:
@@ -175,6 +201,16 @@ private:
     bool  speedBoostActive_  = false;
     float speedBoostTimer_   = 0.0f;
     float powerUpSpawnTimer_ = 0.0f;
+    static constexpr float kPowerUpDuration = 8.0f;
+
+    // --- combo ---
+    int   comboCount_       = 0;
+    float comboTimer_       = 0.0f;  // window before combo resets
+    float comboDisplayTimer_= 0.0f;  // how long to show the x-multiplier text
+
+    // --- boss (level 10) ---
+    Boss boss_       = {};
+    bool bossActive_ = false;
 
     // --- progression / scoring ---
     int level_ = 1;

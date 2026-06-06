@@ -13,24 +13,42 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
     static constexpr int   kVoices = 8;
     static constexpr float kTau    = 6.28318530f;
 
-    enum class ST : uint8_t { LASER, EXPLOSION, HIT, CLEAR };
+    enum class ST : uint8_t { LASER, EXPLOSION, HIT, CLEAR, POWERUP };
 
     struct Voice {
         ST    type   = ST::LASER;
-        float t      = 0.0f;   // elapsed time [s]
-        float phase  = 0.0f;   // oscillator phase [0,1) or LPF state
+        float t      = 0.0f;
+        float phase  = 0.0f;
         bool  active = false;
     };
 
     std::shared_ptr<oboe::AudioStream> stream;
     std::array<Voice, kVoices>         voices{};
 
-    // Bits: 0=LASER 1=EXPLOSION 2=HIT 3=CLEAR – written by game thread.
+    // Bits: 0=LASER 1=EXPLOSION 2=HIT 3=CLEAR 4=POWERUP – game thread writes.
     std::atomic<uint32_t> pending{0};
     std::atomic<bool>     thrust{false};
+    std::atomic<bool>     musicEnabled{false};
 
     float thrustLPF = 0.0f;
     uint32_t rng = 0xDEADBEEFu;
+
+    // ── Background music state (audio thread only) ────────────────────────────
+    // 80 BPM ambient space track in A-minor: pad + bass + arpeggio.
+    static constexpr float kTempo       = 80.0f / 60.0f;   // beats/s
+    static constexpr float kArpInterval = 60.0f / 80.0f / 2.0f; // 8th note = 0.375s
+    static constexpr float kPadFreqs[3] = {110.0f, 130.8f, 164.8f}; // A2 C3 E3
+    static constexpr float kArpFreqs[4] = {220.0f, 261.6f, 329.6f, 440.0f}; // A3 C4 E4 A4
+
+    float musicTime_   = 0.0f;
+    float padPhase_[3] = {};
+    float bassPhase_   = 0.0f;
+    float bassEnv_     = 0.0f;
+    float arpPhase_    = 0.0f;
+    float arpEnv_      = 0.55f;  // start audible on step 0 (A3) immediately
+    float arpTimer_    = 0.0f;
+    int   arpStep_     = 0;
+    int   lastBeat_    = -1;
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -43,7 +61,6 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
         for (auto& v : voices) {
             if (!v.active) { v = {type, 0.0f, 0.0f, true}; return; }
         }
-        // All busy: steal the oldest (first slot).
         voices[0] = {type, 0.0f, 0.0f, true};
     }
 
@@ -65,12 +82,9 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
             case ST::EXPLOSION: {
                 constexpr float dur = 0.50f;
                 if (v.t > dur) { v.active = false; break; }
-                // Sharp transient crack (raw noise, 10 ms)
                 float crack  = white() * expf(-v.t / 0.010f) * 0.65f;
-                // Mid-range rumble (aggressive LPF noise)
                 v.phase      = v.phase * 0.48f + white() * 0.52f;
                 float rumble = v.phase * expf(-v.t / 0.09f) * 0.75f;
-                // Low boom (55 Hz sine, punchy decay)
                 float boom   = sinf(v.t * kTau * 55.0f) * expf(-v.t / 0.045f) * 0.45f;
                 s = crack + rumble + boom;
                 break;
@@ -97,8 +111,65 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
                 s = sinf(v.phase * kTau) * env * 0.45f;
                 break;
             }
+            case ST::POWERUP: {
+                // Rising sparkle arpeggio: four notes ascending over 0.28s
+                constexpr float dur      = 0.28f;
+                constexpr float noteDur  = dur / 4.0f;
+                constexpr float noteFreq[4] = {440.0f, 554.4f, 659.3f, 880.0f};
+                if (v.t > dur) { v.active = false; break; }
+                int   ni  = (int)(v.t / noteDur);
+                if (ni > 3) ni = 3;
+                float nt  = fmodf(v.t, noteDur);
+                float env = sinf(nt / noteDur * 3.14159265f);
+                v.phase  += dt * noteFreq[ni];
+                if (v.phase >= 1.0f) v.phase -= 1.0f;
+                s = sinf(v.phase * kTau) * env * 0.38f;
+                break;
+            }
         }
         v.t += dt;
+        return s;
+    }
+
+    float genMusic() {
+        const float dt = 1.0f / kSR;
+        musicTime_ += dt;
+        float s = 0.0f;
+
+        // Slow tremolo LFO at 0.28 Hz
+        float tremolo = 0.72f + 0.28f * sinf(musicTime_ * kTau * 0.28f);
+
+        // Pad chord: A2 + C3 + E3 sustained
+        for (int i = 0; i < 3; i++) {
+            padPhase_[i] += dt * kPadFreqs[i];
+            if (padPhase_[i] >= 1.0f) padPhase_[i] -= 1.0f;
+            s += sinf(padPhase_[i] * kTau) * 0.022f * tremolo;
+        }
+
+        // Bass: A1 (55 Hz) triggered on beats 1 and 3 of a 4-beat bar
+        float barPhase = fmodf(musicTime_ * kTempo, 4.0f);
+        int   beat     = (int)barPhase;
+        if (beat != lastBeat_) {
+            lastBeat_ = beat;
+            if (beat == 0 || beat == 2) bassEnv_ = 1.0f;
+        }
+        bassPhase_ += dt * 55.0f;
+        if (bassPhase_ >= 1.0f) bassPhase_ -= 1.0f;
+        bassEnv_  *= 0.9989f;
+        s += sinf(bassPhase_ * kTau) * bassEnv_ * 0.065f;
+
+        // Melody arpeggio: A3 C4 E4 A4 cycling on 8th notes
+        arpTimer_ += dt;
+        if (arpTimer_ >= kArpInterval) {
+            arpTimer_ -= kArpInterval;
+            arpStep_   = (arpStep_ + 1) & 3;
+            arpEnv_    = 0.55f;
+        }
+        arpPhase_ += dt * kArpFreqs[arpStep_];
+        if (arpPhase_ >= 1.0f) arpPhase_ -= 1.0f;
+        arpEnv_  *= 0.9988f;
+        s += sinf(arpPhase_ * kTau) * arpEnv_ * 0.018f;
+
         return s;
     }
 
@@ -110,12 +181,14 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
         float* out = static_cast<float*>(data);
 
         uint32_t mask = pending.exchange(0, std::memory_order_relaxed);
-        if (mask & 1u) activate(ST::LASER);
-        if (mask & 2u) activate(ST::EXPLOSION);
-        if (mask & 4u) activate(ST::HIT);
-        if (mask & 8u) activate(ST::CLEAR);
+        if (mask &  1u) activate(ST::LASER);
+        if (mask &  2u) activate(ST::EXPLOSION);
+        if (mask &  4u) activate(ST::HIT);
+        if (mask &  8u) activate(ST::CLEAR);
+        if (mask & 16u) activate(ST::POWERUP);
 
-        const bool thr = thrust.load(std::memory_order_relaxed);
+        const bool thr   = thrust.load(std::memory_order_relaxed);
+        const bool music = musicEnabled.load(std::memory_order_relaxed);
 
         for (int i = 0; i < frames; i++) {
             float s = 0.0f;
@@ -123,15 +196,15 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
             for (auto& v : voices)
                 if (v.active) s += genVoice(v);
 
-            // Thrust rumble: filtered noise while held, decays silently when released.
             if (thr) {
                 thrustLPF = thrustLPF * 0.82f + white() * 0.18f;
                 s += thrustLPF * 0.35f;
             } else {
-                thrustLPF *= 0.97f; // exponential decay, no fresh noise
+                thrustLPF *= 0.97f;
             }
 
-            // Hard limit
+            if (music) s += genMusic();
+
             out[i] = s >  1.0f ?  1.0f :
                      s < -1.0f ? -1.0f : s;
         }
@@ -176,8 +249,10 @@ AudioEngine::~AudioEngine() { shutdown(); delete impl_; }
 bool AudioEngine::init()     { return impl_->open(); }
 void AudioEngine::shutdown() { impl_->close(); }
 
-void AudioEngine::triggerLaser()     { impl_->pending.fetch_or(1u, std::memory_order_relaxed); }
-void AudioEngine::triggerExplosion() { impl_->pending.fetch_or(2u, std::memory_order_relaxed); }
-void AudioEngine::triggerPlayerHit() { impl_->pending.fetch_or(4u, std::memory_order_relaxed); }
-void AudioEngine::triggerLevelClear(){ impl_->pending.fetch_or(8u, std::memory_order_relaxed); }
-void AudioEngine::setThrust(bool a)  { impl_->thrust.store(a,  std::memory_order_relaxed); }
+void AudioEngine::triggerLaser()     { impl_->pending.fetch_or( 1u, std::memory_order_relaxed); }
+void AudioEngine::triggerExplosion() { impl_->pending.fetch_or( 2u, std::memory_order_relaxed); }
+void AudioEngine::triggerPlayerHit() { impl_->pending.fetch_or( 4u, std::memory_order_relaxed); }
+void AudioEngine::triggerLevelClear(){ impl_->pending.fetch_or( 8u, std::memory_order_relaxed); }
+void AudioEngine::triggerPowerUp()   { impl_->pending.fetch_or(16u, std::memory_order_relaxed); }
+void AudioEngine::setThrust(bool a)  { impl_->thrust.store(a,        std::memory_order_relaxed); }
+void AudioEngine::setMusicEnabled(bool e) { impl_->musicEnabled.store(e, std::memory_order_relaxed); }
