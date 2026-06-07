@@ -117,10 +117,7 @@ jobs:
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
             adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity
-            for i in $(seq 1 15); do
-              adb shell dumpsys window windows | grep -q "com.jpcottin.vulkanasteroids" && break
-              sleep 1
-            done
+            for i in $(seq 1 15); do adb shell dumpsys window windows | grep -q "com.jpcottin.vulkanasteroids" && break; sleep 1; done || true
             sleep 4
             adb exec-out screencap -p > screenshot.png || true
             adb logcat -d Asteroids:V AndroidRuntime:E *:S > logcat.txt || true
