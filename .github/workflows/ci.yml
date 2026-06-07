@@ -70,7 +70,7 @@ jobs:
           api-level: 34
           arch: x86_64
           profile: pixel_6
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-window -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
           disable-animations: true
           emulator-boot-timeout: 900
           script: ./gradlew runNativeTests -PtestAbi=x86_64 --no-daemon
@@ -108,7 +108,7 @@ jobs:
           api-level: 34
           arch: x86_64
           profile: pixel_6
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-window -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
           disable-animations: true
           emulator-boot-timeout: 900
           script: |

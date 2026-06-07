@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <cstdio>
+#include <cstdlib>
 #include "game.h"
 
 // Viewport used for all tests: portrait phone dimensions.
@@ -386,4 +388,146 @@ TEST(PowerUp, NotCarriedToNewGame) {
     g.update(0.016f);
     g.onPointerUp(0);
     EXPECT_EQ(g.bulletCount(), 1);
+}
+
+// ── Settings & gear icon ──────────────────────────────────────────────────────
+
+// Gear icon pixel position for the test viewport (1080×2400, asp=0.45).
+// world gear = (0.45 - 0.062, -0.82)  →  pixel (1006, 216).
+static constexpr float kGearPX = 1006.f, kGearPY = 216.f;
+
+// Settings row y-pixels (x = screen centre, which is within the back-button x-bound).
+static constexpr float kSettingsCX  = 540.f;
+static constexpr float kSoundPY     = 1020.f;   // world_y -0.15
+static constexpr float kAutoRunPY   = 1320.f;   // world_y  0.10
+static constexpr float kBackPY      = 1824.f;   // world_y  0.52
+
+TEST(Settings, GearTapFromTitleOpensSettings) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_TRUE(g.inSettingsForTest());
+}
+
+TEST(Settings, GearTapFromPlayingOpensSettings) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_TRUE(g.inSettingsForTest());
+}
+
+TEST(Settings, BackButtonReturnsToTitle) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inSettingsForTest());
+    g.onPointerDown(0, kSettingsCX, kBackPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_TRUE(g.inTitleForTest());
+}
+
+TEST(Settings, SoundToggleFlipsSoundEnabled) {
+    Game g;
+    g.setViewport(kW, kH);
+    ASSERT_TRUE(g.soundEnabledForTest());
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inSettingsForTest());
+    g.onPointerDown(0, kSettingsCX, kSoundPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_FALSE(g.soundEnabledForTest());
+}
+
+TEST(Settings, AutoRunToggleFlipsAutoRunActive) {
+    Game g;
+    g.setViewport(kW, kH);
+    ASSERT_FALSE(g.autoRunActiveForTest());
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inSettingsForTest());
+    g.onPointerDown(0, kSettingsCX, kAutoRunPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_TRUE(g.autoRunActiveForTest());
+}
+
+TEST(Settings, AutoRunPersistedAcrossSaveLoad) {
+    char tmpDir[] = "/data/local/tmp/vktest_XXXXXX";
+    char* dir = mkdtemp(tmpDir);
+    if (!dir) { GTEST_SKIP() << "cannot create temp dir"; }
+
+    // Enable AUTO RUN and save via the settings toggle flow.
+    {
+        Game g;
+        g.setViewport(kW, kH);
+        g.setDataPath(dir);
+        g.onPointerDown(0, kGearPX, kGearPY);
+        g.update(0.016f);
+        g.onPointerUp(0);
+        g.onPointerDown(0, kSettingsCX, kAutoRunPY);
+        g.update(0.016f);
+        g.onPointerUp(0);
+        ASSERT_TRUE(g.autoRunActiveForTest());
+    }
+
+    // A fresh Game loaded from the same path must restore autoRunActive_.
+    {
+        Game g2;
+        g2.setViewport(kW, kH);
+        g2.setDataPath(dir);
+        EXPECT_TRUE(g2.autoRunActiveForTest());
+    }
+
+    char settingsPath[600];
+    snprintf(settingsPath, sizeof(settingsPath), "%s/settings.bin", dir);
+    remove(settingsPath);
+    rmdir(dir);
+}
+
+TEST(Settings, FirstFingerWinsForTapPosition) {
+    // Multi-touch race: second finger landing on the gear must not override the
+    // first finger's tap coordinates (first-wins fix).
+    Game g;
+    g.setViewport(kW, kH);
+    g.onPointerDown(0, kW * 0.5f, kH * 0.5f);  // centre — NOT a gear tap
+    g.onPointerDown(1, kGearPX, kGearPY);        // gear — must be ignored for tap coords
+    g.update(0.016f);
+    g.onPointerUp(0);
+    g.onPointerUp(1);
+    // First tap was at centre → startGame() should have fired, not settings.
+    EXPECT_FALSE(g.inSettingsForTest());
+    EXPECT_FALSE(g.inTitleForTest());
+}
+
+// ── Auto-run AI ───────────────────────────────────────────────────────────────
+
+TEST(AutoRun, FiresWhenAlignedWithAsteroid) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);  // directly above ship (ship at x≈0)
+    g.setAutoRunForTest(true);
+    g.update(0.016f);
+    EXPECT_GT(g.bulletCount(), 0);
+}
+
+TEST(AutoRun, MovesShipTowardTarget) {
+    // Ship starts centred; asteroid spawned to the right — AI should steer right.
+    Game g;
+    startPlaying(g);
+    g.update(1.0f);  // let ship settle
+    float xBefore = g.shipX();
+    g.spawnTestAsteroid(0.4f, 0.30f, 0.06f, 2);  // above and to the right
+    g.setAutoRunForTest(true);
+    g.update(0.3f);
+    EXPECT_GT(g.shipX(), xBefore);
 }

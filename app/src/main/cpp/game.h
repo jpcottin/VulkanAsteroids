@@ -29,7 +29,7 @@ public:
     enum AsteroidType { AT_NORMAL = 0, AT_FAST = 1, AT_ARMORED = 2 };
 
 private:
-    enum State { TITLE, PLAYING, LEVEL_CLEAR, GAME_OVER, WIN };
+    enum State { TITLE, PLAYING, LEVEL_CLEAR, GAME_OVER, WIN, SETTINGS };
 
     struct Asteroid {
         float x, y, vx, vy, r, rot, spin;
@@ -105,6 +105,13 @@ private:
     void drawPowerUpHUD(std::vector<DrawCmd>& out);
     void drawComboIndicator(std::vector<DrawCmd>& out);
     void drawBossHealthBar(std::vector<DrawCmd>& out);
+    void drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
+                      float r, float g, float b, float a);
+    void drawSettingsScreen(std::vector<DrawCmd>& out);
+    void loadSettings();
+    void saveSettings();
+    void updateAutoRun(float dt);
+    bool isGearTap(float px, float py) const;
     int numDigits(int v) const;
 
     // --- audio ---
@@ -160,6 +167,12 @@ public:
     void triggerNewGameForTest()         { startGame(); }
     bool bossAliveForTest()        const { return boss_.alive; }
     int  bossHpForTest()           const { return boss_.hp; }
+    // Settings / auto-run accessors
+    bool soundEnabledForTest()     const { return soundEnabled_; }
+    bool autoRunActiveForTest()    const { return autoRunActive_; }
+    bool inSettingsForTest()       const { return state_ == SETTINGS; }
+    bool inTitleForTest()          const { return state_ == TITLE; }
+    void setAutoRunForTest(bool v)       { autoRunActive_ = v; }
 #endif
 
 private:
@@ -170,11 +183,14 @@ private:
     // --- input ---
     static const int kMaxPointers = 16;
     Pointer pointers_[kMaxPointers] = {};
-    bool tapPending_ = false;
+    bool  tapPending_ = false;
+    float tapX_       = 0.0f;
+    float tapY_       = 0.0f;
 
     // --- state ---
-    State state_ = TITLE;
-    float animTime_ = 0.0f;
+    State state_     = TITLE;
+    State prevState_ = TITLE;
+    float animTime_  = 0.0f;
     float stateTimer_ = 0.0f;
 
     // --- ship ---
@@ -221,6 +237,17 @@ private:
     float spawnTimer_ = 0.0f;
     float spawnInterval_ = 1.0f;
     float fallSpeed_ = 0.5f;
+
+    // --- settings (persisted) ---
+    bool soundEnabled_  = true;
+    bool autoRunActive_ = false;
+    char settingsPath_[512] = {};
+
+    // --- auto-run AI ---
+    bool aiLeft_   = false;
+    bool aiRight_  = false;
+    bool aiThrust_ = false;
+    bool aiFire_   = false;
 
     std::vector<Asteroid>  asteroids_;
     std::vector<Bullet>    bullets_;

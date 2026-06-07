@@ -64,27 +64,32 @@ void Game::setViewport(int w, int h) {
 // Right half excluding fire zone: move right
 
 bool Game::leftHeld() const {
+    if (autoRunActive_ && aiLeft_) return true;
     for (auto& p : pointers_) {
         if (!p.active || p.x >= vw_ * 0.5f) continue;
-        if (p.x < vw_ * 0.30f && p.y > vh_ * 0.72f) continue; // skip thrust zone
+        if (p.x < vw_ * 0.30f && p.y > vh_ * 0.72f) continue;
         return true;
     }
     return false;
 }
 bool Game::rightHeld() const {
+    if (autoRunActive_ && aiRight_) return true;
     for (auto& p : pointers_) {
         if (!p.active || p.x < vw_ * 0.5f) continue;
-        if (p.x > vw_ * 0.70f && p.y > vh_ * 0.72f) continue; // skip fire zone
+        if (p.x > vw_ * 0.70f && p.y > vh_ * 0.72f) continue;
+        if (isGearTap(p.x, p.y)) continue;  // gear area excluded from movement
         return true;
     }
     return false;
 }
 bool Game::thrustHeld() const {
+    if (autoRunActive_ && aiThrust_) return true;
     for (auto& p : pointers_)
         if (p.active && p.x < vw_ * 0.30f && p.y > vh_ * 0.72f) return true;
     return false;
 }
 bool Game::fireHeld() const {
+    if (autoRunActive_ && aiFire_) return true;
     for (auto& p : pointers_)
         if (p.active && p.x > vw_ * 0.70f && p.y > vh_ * 0.72f) return true;
     return false;
@@ -96,6 +101,7 @@ void Game::onPointerDown(int id, float x, float y) {
         pointers_[id].x = x;
         pointers_[id].y = y;
     }
+    if (!tapPending_) { tapX_ = x; tapY_ = y; }  // first finger wins
     tapPending_ = true;
 }
 void Game::onPointerMove(int id, float x, float y) {
@@ -117,8 +123,10 @@ static const uint32_t kHsMagic = 0x41535452u; // "ASTR"
 
 void Game::setDataPath(const char* path) {
     if (!path || path[0] == '\0') return;
-    snprintf(dataPath_, sizeof(dataPath_), "%s/highscores.bin", path);
+    snprintf(dataPath_,    sizeof(dataPath_),    "%s/highscores.bin", path);
+    snprintf(settingsPath_, sizeof(settingsPath_), "%s/settings.bin",   path);
     loadHighScores();
+    loadSettings();
 }
 
 void Game::loadHighScores() {
@@ -149,6 +157,48 @@ void Game::saveHighScores() {
     }
     fwrite(&buf, sizeof(buf), 1, f);
     fclose(f);
+}
+
+static const uint32_t kSettingsMagic = 0x53455454u;  // "SETT"
+
+// Gear icon world position — single source of truth for both rendering and hit-testing.
+static constexpr float kGearOffsetX = 0.062f;   // distance from right edge
+static constexpr float kGearWY      = -0.82f;   // y in world space (top area)
+
+// Settings row y-positions — shared between drawSettingsScreen() and the tap handler.
+static constexpr float kSettingSoundY   = -0.15f;
+static constexpr float kSettingAutoRunY =  0.10f;
+static constexpr float kSettingBackY    =  0.52f;
+
+void Game::loadSettings() {
+    if (settingsPath_[0] == '\0') return;
+    FILE* f = fopen(settingsPath_, "rb");
+    if (!f) return;
+    struct { uint32_t magic; int32_t soundOn; int32_t autoRun; } buf = {};
+    size_t n = fread(&buf, 1, sizeof(buf), f);
+    fclose(f);
+    if (n >= 8 && buf.magic == kSettingsMagic) {
+        soundEnabled_  = (buf.soundOn != 0);
+        if (n >= 12) autoRunActive_ = (buf.autoRun != 0);
+    }
+}
+
+void Game::saveSettings() {
+    if (settingsPath_[0] == '\0') return;
+    FILE* f = fopen(settingsPath_, "wb");
+    if (!f) return;
+    struct { uint32_t magic; int32_t soundOn; int32_t autoRun; } buf = {
+        kSettingsMagic, soundEnabled_ ? 1 : 0, autoRunActive_ ? 1 : 0
+    };
+    fwrite(&buf, sizeof(buf), 1, f);
+    fclose(f);
+}
+
+bool Game::isGearTap(float px, float py) const {
+    float wy = 2.0f * py / vh_ - 1.0f;
+    float wx = (2.0f * px / vw_ - 1.0f) * asp_;
+    float dx = wx - (asp_ - kGearOffsetX), dy = wy - kGearWY;
+    return dx*dx + dy*dy < 0.0081f;  // 0.09 world units radius
 }
 
 void Game::spawnDebris(float ax, float ay, float ar, float cr, float cg, float cb) {
@@ -206,7 +256,7 @@ void Game::startGame() {
     shieldActive_ = false;    shieldTimer_     = 0.0f;
     spreadActive_ = false;    spreadTimer_     = 0.0f;
     speedBoostActive_ = false; speedBoostTimer_ = 0.0f;
-    if (audio_) audio_->setMusicEnabled(true);
+    if (audio_) audio_->setMusicEnabled(soundEnabled_);
     startLevel(1);
 }
 
@@ -368,6 +418,11 @@ void Game::update(float dt) {
 
     switch (state_) {
         case TITLE: {
+            if (tapped && isGearTap(tapX_, tapY_)) {
+                prevState_ = TITLE;
+                state_ = SETTINGS;
+                break;
+            }
             if (tapped) { startGame(); break; }
             spawnTimer_ -= dt;
             if (spawnTimer_ <= 0.0f) { spawnAsteroid(true); spawnTimer_ = 0.8f; }
@@ -378,8 +433,18 @@ void Game::update(float dt) {
             break;
         }
         case PLAYING: {
+            if (tapped && isGearTap(tapX_, tapY_)) {
+                prevState_ = PLAYING;
+                if (audio_) audio_->setThrust(false);
+                state_ = SETTINGS;
+                break;
+            }
+            // Reset AI flags; updateAutoRun sets them when autopilot is on.
+            aiLeft_ = aiRight_ = aiThrust_ = aiFire_ = false;
+            if (autoRunActive_) updateAutoRun(dt);
+
             // Audio: sync thrust sound each frame
-            if (audio_) audio_->setThrust(thrustHeld());
+            if (audio_) audio_->setThrust(soundEnabled_ && thrustHeld());
 
             // Combo decay
             if (comboTimer_ > 0.0f) { comboTimer_ -= dt; if (comboTimer_ <= 0.0f) comboCount_ = 0; }
@@ -410,7 +475,7 @@ void Game::update(float dt) {
                     if (pu.type == PU_SHIELD)      { shieldActive_ = true;     shieldTimer_     = kPowerUpDuration; }
                     else if (pu.type == PU_SPREAD)  { spreadActive_ = true;     spreadTimer_     = kPowerUpDuration; }
                     else                            { speedBoostActive_ = true; speedBoostTimer_ = kPowerUpDuration; }
-                    if (audio_) audio_->triggerPowerUp();
+                    if (audio_ && soundEnabled_) audio_->triggerPowerUp();
                 }
             }
             for (size_t i = powerUps_.size(); i-- > 0;)
@@ -433,7 +498,7 @@ void Game::update(float dt) {
                             invuln_ = 1.5f;
                             shakeAmt_ = 1.0f;
                             comboCount_ = 0; comboTimer_ = 0.0f;
-                            if (audio_) audio_->triggerPlayerHit();
+                            if (audio_ && soundEnabled_) audio_->triggerPlayerHit();
                             if (haptic_) haptic_();
                             Explosion flash;
                             flash.x = shipX_; flash.y = shipY_; flash.radius = shipScale_;
@@ -496,7 +561,7 @@ void Game::update(float dt) {
                             invuln_ = 1.5f;
                             shakeAmt_ = 1.0f;
                             comboCount_ = 0; comboTimer_ = 0.0f;
-                            if (audio_) audio_->triggerPlayerHit();
+                            if (audio_ && soundEnabled_) audio_->triggerPlayerHit();
                             if (haptic_) haptic_();
                             Explosion shipFlash;
                             shipFlash.x = shipX_; shipFlash.y = shipY_;
@@ -538,7 +603,7 @@ void Game::update(float dt) {
                     fireBullet( shipScale_ * 0.55f,  0.28f);
                 }
                 fireCooldown_ = kFireCooldown;
-                if (audio_) audio_->triggerLaser();
+                if (audio_ && soundEnabled_) audio_->triggerLaser();
             }
             for (auto& b : bullets_) {
                 if (!b.alive) continue;
@@ -565,7 +630,7 @@ void Game::update(float dt) {
                         explosions_.push_back(hitFlash);
                         if (boss_.hp <= 0) {
                             boss_.alive = false;
-                            if (audio_) audio_->triggerExplosion();
+                            if (audio_ && soundEnabled_) audio_->triggerExplosion();
                             spawnDebris(boss_.x, boss_.y, boss_.r * 1.5f, 0.9f, 0.55f, 0.15f);
                             spawnDebris(boss_.x, boss_.y, boss_.r,        0.8f, 0.40f, 0.10f);
                             score_ += 50 * level_;
@@ -603,7 +668,7 @@ void Game::update(float dt) {
                         long baseScore = 10L * level_;
                         score_ += baseScore * comboCount_;
                         dodgedThisLevel_++;
-                        if (audio_) audio_->triggerExplosion();
+                        if (audio_ && soundEnabled_) audio_->triggerExplosion();
                         // Copy before push_backs: splitAsteroid/spawnPowerUp may reallocate
                         // asteroids_, invalidating the 'a' reference.
                         Asteroid dead = a;
@@ -625,7 +690,7 @@ void Game::update(float dt) {
             if (state_ == PLAYING && dodgedThisLevel_ >= goal_ && level_ < 10) {
                 score_ += 100 * level_;
                 state_ = LEVEL_CLEAR;
-                if (audio_) audio_->triggerLevelClear();
+                if (audio_ && soundEnabled_) audio_->triggerLevelClear();
                 stateTimer_ = 0.0f;
                 asteroids_.clear();
                 bullets_.clear();
@@ -633,6 +698,11 @@ void Game::update(float dt) {
             break;
         }
         case LEVEL_CLEAR: {
+            if (tapped && isGearTap(tapX_, tapY_)) {
+                prevState_ = LEVEL_CLEAR;
+                state_ = SETTINGS;
+                break;
+            }
             stateTimer_ += dt;
             if (stateTimer_ >= 1.8f) {
                 if (level_ >= 10) { state_ = WIN; stateTimer_ = 0.0f; checkHighScore(); }
@@ -657,6 +727,29 @@ void Game::update(float dt) {
                 state_ = TITLE;
                 asteroids_.clear();
                 if (audio_) audio_->setMusicEnabled(false);
+            }
+            break;
+        }
+        case SETTINGS: {
+            if (tapped) {
+                float wy = 2.0f * tapY_ / vh_ - 1.0f;
+                float wx = (2.0f * tapX_ / vw_ - 1.0f) * asp_;
+                const float kHitH = 0.12f;
+                if (fabsf(wy - kSettingSoundY) < kHitH) {
+                    soundEnabled_ = !soundEnabled_;
+                    saveSettings();
+                    if (!soundEnabled_) {
+                        if (audio_) audio_->setMusicEnabled(false);
+                    } else if (prevState_ == PLAYING || prevState_ == LEVEL_CLEAR) {
+                        if (audio_) audio_->setMusicEnabled(true);
+                    }
+                } else if (fabsf(wy - kSettingAutoRunY) < kHitH) {
+                    autoRunActive_ = !autoRunActive_;
+                    saveSettings();
+                } else if (fabsf(wy - kSettingBackY) < kHitH && fabsf(wx) < 0.15f) {
+                    onPointersCancel();
+                    state_ = prevState_;
+                }
             }
             break;
         }
@@ -843,6 +936,132 @@ void Game::drawBossHealthBar(std::vector<DrawCmd>& out) {
     emit(out, SHAPE_QUAD, -barW + barW * progress, y, barW * progress, 0.012f, 0.0f, fr, fg, fb, 0.9f);
     // "BOSS" label using stroke letters
     drawText(out, "BOSS", 0.0f, y - 0.045f, 0.038f, fr, fg, fb, 0.85f);
+}
+
+void Game::updateAutoRun(float dt) {
+    const float kPreferredY  = 0.38f;
+    const float kEvadeRadius = 0.22f;
+
+    // Find best shoot target: asteroid above ship with shortest approach angle
+    float bestTargetX  = 0.0f;
+    float bestScore    = 1e9f;
+    bool  hasTarget    = false;
+    for (auto& a : asteroids_) {
+        if (!a.alive || a.y >= shipY_) continue;
+        float distX   = fabsf(a.x - shipX_);
+        float urgency = (a.y + 1.2f) + a.vy * 0.4f;
+        float score   = distX / (urgency + 0.01f);
+        if (score < bestScore) { bestScore = score; bestTargetX = a.x; hasTarget = true; }
+    }
+    // Boss: predict 0.4 s ahead for lead aiming
+    if (bossActive_ && boss_.alive) {
+        float predictX = sinf((boss_.t + 0.40f) * 0.70f) * asp_ * 0.62f;
+        float score    = fabsf(predictX - shipX_) / 3.0f;
+        if (score < bestScore) { bestScore = score; bestTargetX = predictX; hasTarget = true; }
+    }
+
+    // Find closest threat for evasion (compare squared distances, sqrt only once)
+    float closestDistSq = 1e18f, closestX = shipX_;
+    for (auto& a : asteroids_) {
+        if (!a.alive) continue;
+        float dx = a.x - shipX_, dy = a.y - shipY_;
+        float dsq = dx*dx + dy*dy;
+        if (dsq < closestDistSq) { closestDistSq = dsq; closestX = a.x; }
+    }
+    const float closestDist = sqrtf(closestDistSq);
+
+    // Horizontal: evade > align-to-target > return-to-center
+    if (closestDist < kEvadeRadius) {
+        if (closestX >= shipX_) aiLeft_ = true; else aiRight_ = true;
+    } else if (hasTarget) {
+        float dx = bestTargetX - shipX_;
+        if (fabsf(dx) > 0.03f) { if (dx > 0) aiRight_ = true; else aiLeft_ = true; }
+    } else {
+        if      (shipX_ >  0.05f) aiLeft_  = true;
+        else if (shipX_ < -0.05f) aiRight_ = true;
+    }
+    // Seek falling power-ups when no urgent threat
+    if (closestDist > 0.35f) {
+        for (auto& pu : powerUps_) {
+            if (!pu.alive) continue;
+            float puDy = pu.y - shipY_;
+            if (puDy > 0.45f || puDy < -0.15f) continue;
+            float dx = pu.x - shipX_;
+            if (fabsf(dx) > 0.07f) { aiLeft_ = dx < 0; aiRight_ = dx > 0; }
+            break;
+        }
+    }
+
+    // Vertical: thrust to maintain preferred altitude; emergency if threat is very close
+    aiThrust_ = (shipY_ > kPreferredY + 0.06f) || (closestDist < kEvadeRadius * 0.7f);
+
+    // Fire when aligned with target
+    float fireThresh = spreadActive_ ? 0.14f : 0.055f;
+    if (hasTarget && fabsf(bestTargetX - shipX_) < fireThresh) aiFire_ = true;
+    if (bossActive_ && boss_.alive) {
+        float bossThresh = spreadActive_ ? 0.20f : 0.08f;
+        if (fabsf(boss_.x - shipX_) < bossThresh) aiFire_ = true;
+    }
+    (void)dt;
+}
+
+void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
+                         float r, float g, float b, float a) {
+    // Circular body approximated by SHAPE_ASTEROID (32-vertex polygon)
+    const float bodyR = size * 0.68f;
+    emit(out, SHAPE_ASTEROID, cx, cy, bodyR, bodyR, 0.0f, r, g, b, a);
+
+    // 6 rectangular teeth protruding clearly beyond the body
+    const float toothCR = size * 0.94f;   // center of tooth from gear center
+    const float toothHW = size * 0.20f;   // tooth half-width  (tangential)
+    const float toothHH = size * 0.30f;   // tooth half-height (radial)
+    for (int i = 0; i < 6; i++) {
+        float ang = i * 1.0472f;  // 60° apart
+        emit(out, SHAPE_QUAD,
+             cx + cosf(ang) * toothCR,
+             cy + sinf(ang) * toothCR,
+             toothHW, toothHH, ang, r, g, b, a);
+    }
+
+    // Centre hole punched through in background colour
+    emit(out, SHAPE_ASTEROID, cx, cy, size * 0.30f, size * 0.30f, 0.0f,
+         0.03f, 0.04f, 0.09f, a);
+}
+
+void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
+    // Full-screen dark overlay
+    emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f, 0.04f, 0.06f, 0.14f, 0.93f);
+
+    drawText(out, "SETTINGS", 0.0f, -0.52f, 0.078f, 0.55f, 0.78f, 1.00f, 1.0f);
+
+    const float labelX  = -asp_ * 0.48f;
+    const float toggleX =  asp_ * 0.45f;
+
+    // Sound row
+    drawText(out, "SOUND", labelX, kSettingSoundY, 0.055f, 0.80f, 0.85f, 0.90f, 0.9f);
+    emit(out, SHAPE_QUAD, toggleX, kSettingSoundY, 0.090f, 0.040f, 0.0f,
+         soundEnabled_ ? 0.08f : 0.20f,
+         soundEnabled_ ? 0.48f : 0.18f,
+         soundEnabled_ ? 0.08f : 0.18f, 0.75f);
+    drawText(out, soundEnabled_ ? "ON" : "OFF", toggleX, kSettingSoundY, 0.048f,
+             soundEnabled_ ? 0.35f : 0.65f,
+             soundEnabled_ ? 1.00f : 0.45f,
+             soundEnabled_ ? 0.35f : 0.45f, 1.0f);
+
+    // Auto Run row
+    drawText(out, "AUTO RUN", labelX, kSettingAutoRunY, 0.055f, 0.80f, 0.85f, 0.90f, 0.9f);
+    emit(out, SHAPE_QUAD, toggleX, kSettingAutoRunY, 0.090f, 0.040f, 0.0f,
+         autoRunActive_ ? 0.08f : 0.20f,
+         autoRunActive_ ? 0.48f : 0.18f,
+         autoRunActive_ ? 0.08f : 0.18f, 0.75f);
+    drawText(out, autoRunActive_ ? "ON" : "OFF", toggleX, kSettingAutoRunY, 0.048f,
+             autoRunActive_ ? 0.35f : 0.65f,
+             autoRunActive_ ? 1.00f : 0.45f,
+             autoRunActive_ ? 0.35f : 0.45f, 1.0f);
+
+    // Back button
+    emit(out, SHAPE_QUAD, 0.0f, kSettingBackY, 0.12f, 0.052f, 0.0f, 0.22f, 0.22f, 0.25f, 0.82f);
+    drawText(out, "BACK", 0.0f, kSettingBackY, 0.055f, 0.85f, 0.85f, 0.92f, 1.0f);
 }
 
 void Game::render(std::vector<DrawCmd>& out) {
@@ -1102,6 +1321,32 @@ void Game::render(std::vector<DrawCmd>& out) {
              0.22f, 0.42f, 0.65f, 0.3f + 0.6f * pulse);
         emit(out, SHAPE_SHIP_BODY,  0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
              0.28f, 0.72f, 0.92f, 0.3f + 0.6f * pulse);
+    }
+
+    // ── Gear button — shake-free, top-right corner ───────────────────────────
+    if (state_ == TITLE || state_ == PLAYING || state_ == LEVEL_CLEAR) {
+        float svX = shakeX_, svY = shakeY_;
+        shakeX_ = shakeY_ = 0.0f;
+        float gearWX = asp_ - kGearOffsetX, gearWY = kGearWY;
+        float gearA  = 0.55f + 0.12f * sinf(animTime_ * 2.0f);
+        float gr = autoRunActive_ ? 0.25f : 0.55f;
+        float gg = autoRunActive_ ? 1.00f : 0.62f;
+        float gb = autoRunActive_ ? 0.35f : 0.78f;
+        drawGearIcon(out, gearWX, gearWY, 0.046f, gr, gg, gb, gearA);
+        if (autoRunActive_ && (state_ == PLAYING || state_ == LEVEL_CLEAR)) {
+            float autoA = 0.38f + 0.28f * sinf(animTime_ * 3.5f);
+            drawText(out, "AUTO", gearWX - 0.18f, gearWY, 0.030f,
+                     0.25f, 1.00f, 0.38f, autoA);
+        }
+        shakeX_ = svX; shakeY_ = svY;
+    }
+
+    // ── Settings overlay — drawn last so it covers everything ────────────────
+    if (state_ == SETTINGS) {
+        float svX = shakeX_, svY = shakeY_;
+        shakeX_ = shakeY_ = 0.0f;
+        drawSettingsScreen(out);
+        shakeX_ = svX; shakeY_ = svY;
     }
 }
 
