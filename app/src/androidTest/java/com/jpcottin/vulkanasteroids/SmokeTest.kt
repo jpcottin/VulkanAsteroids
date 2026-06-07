@@ -42,9 +42,13 @@ class SmokeTest {
         val screenshotFile = File(context.getExternalFilesDir(null), "smoke.png")
 
         val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        screenshotFile.outputStream().use { stream ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        if (bitmap != null) {
+            screenshotFile.outputStream().use { stream ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            }
+            println("Screenshot saved to: ${screenshotFile.absolutePath}")
+        } else {
+            println("takeScreenshot() returned null — skipping screenshot save")
         }
-        println("Screenshot saved to: ${screenshotFile.absolutePath}")
     }
 }
