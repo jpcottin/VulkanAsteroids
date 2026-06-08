@@ -506,7 +506,7 @@ void Game::update(float dt) {
                             flash.cr = 0.45f; flash.cg = 0.9f; flash.cb = 1.0f;
                             flash.alive = true;
                             explosions_.push_back(flash);
-                            if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
+                            if (lives_ <= 0) { if (audio_) audio_->setThrust(false); state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
                         }
                     }
                 }
@@ -570,7 +570,7 @@ void Game::update(float dt) {
                             shipFlash.cr = 0.45f; shipFlash.cg = 0.9f; shipFlash.cb = 1.0f;
                             shipFlash.alive = true;
                             explosions_.push_back(shipFlash);
-                            if (lives_ <= 0) { state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
+                            if (lives_ <= 0) { if (audio_) audio_->setThrust(false); state_ = GAME_OVER; stateTimer_ = 0.0f; checkHighScore(); }
                         }
                     }
                 }
@@ -634,7 +634,7 @@ void Game::update(float dt) {
                             spawnDebris(boss_.x, boss_.y, boss_.r * 1.5f, 0.9f, 0.55f, 0.15f);
                             spawnDebris(boss_.x, boss_.y, boss_.r,        0.8f, 0.40f, 0.10f);
                             score_ += 50 * level_;
-                            state_ = WIN; stateTimer_ = 0.0f; checkHighScore();
+                            if (audio_) audio_->setThrust(false); state_ = WIN; stateTimer_ = 0.0f; checkHighScore();
                         }
                         continue;
                     }
@@ -689,6 +689,7 @@ void Game::update(float dt) {
             // Level clear: level 10 is cleared only by defeating the boss.
             if (state_ == PLAYING && dodgedThisLevel_ >= goal_ && level_ < 10) {
                 score_ += 100 * level_;
+                if (audio_) audio_->setThrust(false);
                 state_ = LEVEL_CLEAR;
                 if (audio_ && soundEnabled_) audio_->triggerLevelClear();
                 stateTimer_ = 0.0f;
