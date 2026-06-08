@@ -2,9 +2,12 @@ cmake_minimum_required(VERSION 3.22.1)
 project(asteroids LANGUAGES C CXX)
 
 # --- Locate glslc (ships inside the NDK) and compile GLSL -> SPIR-V C arrays ---
-file(GLOB GLSLC_CANDIDATES "${ANDROID_NDK}/shader-tools/*/glslc")
-list(GET GLSLC_CANDIDATES 0 GLSLC)
-if(NOT GLSLC)
+file(GLOB GLSLC_CANDIDATES
+    "${ANDROID_NDK}/shader-tools/*/glslc"
+    "${ANDROID_NDK}/shader-tools/*/glslc.exe")
+if(GLSLC_CANDIDATES)
+    list(GET GLSLC_CANDIDATES 0 GLSLC)
+else()
     message(FATAL_ERROR "glslc not found under ${ANDROID_NDK}/shader-tools")
 endif()
 
