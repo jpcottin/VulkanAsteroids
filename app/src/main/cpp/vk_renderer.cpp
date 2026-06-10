@@ -20,7 +20,7 @@ static const uint32_t kFragSpv[] =
 struct Push {
     float mtx[4];
     float trans[2];
-    float pad[2];
+    float style[2];  // x: FillStyle, y: noise seed
     float color[4];
 };
 
@@ -243,25 +243,56 @@ bool VkRenderer::createVertexBuffer() {
     }
     shapeCount_[SHAPE_SHIP] = 9 * 3;
 
-    // ASTEROID: rugged 32-vertex polygon with aggressive radius variation for rocky surface.
+    // ASTEROIDS: rugged 32-vertex polygons as triangle fans. Four silhouette
+    // variants so a field of rocks doesn't read as one rotated stamp.
     const int N = 32;
-    const float radii[N] = {
+    auto pushAsteroid = [&](Shape shape, const float* radii) {
+        shapeFirst_[shape] = (uint32_t)(v.size() / 2);
+        for (int i = 0; i < N; i++) {
+            float a0 = (float)(2.0 * M_PI * i / N);
+            float a1 = (float)(2.0 * M_PI * ((i + 1) % N) / N);
+            float r0 = radii[i];
+            float r1 = radii[(i + 1) % N];
+            push(0.0f, 0.0f);
+            push(r0 * cosf(a0), r0 * sinf(a0));
+            push(r1 * cosf(a1), r1 * sinf(a1));
+        }
+        shapeCount_[shape] = N * 3;
+    };
+
+    // Variant 1: aggressive radius variation, jagged all around (the original).
+    static const float kRock1[N] = {
         1.0f, 0.62f, 0.91f, 0.58f, 0.88f, 0.65f, 0.95f, 0.52f,
         1.0f, 0.68f, 0.92f, 0.55f, 0.87f, 0.70f, 0.94f, 0.51f,
         1.0f, 0.60f, 0.89f, 0.59f, 0.86f, 0.66f, 0.96f, 0.53f,
         1.0f, 0.67f, 0.90f, 0.57f, 0.85f, 0.69f, 0.93f, 0.54f
     };
-    shapeFirst_[SHAPE_ASTEROID] = (uint32_t)(v.size() / 2);
-    for (int i = 0; i < N; i++) {
-        float a0 = (float)(2.0 * M_PI * i / N);
-        float a1 = (float)(2.0 * M_PI * ((i + 1) % N) / N);
-        float r0 = radii[i];
-        float r1 = radii[(i + 1) % N];
-        push(0.0f, 0.0f);
-        push(r0 * cosf(a0), r0 * sinf(a0));
-        push(r1 * cosf(a1), r1 * sinf(a1));
-    }
-    shapeCount_[SHAPE_ASTEROID] = N * 3;
+    // Variant 2: chunky boulder — mostly full radius with two deep bites.
+    static const float kRock2[N] = {
+        0.96f, 0.99f, 0.92f, 0.88f, 0.94f, 0.97f, 0.90f, 0.62f,
+        0.55f, 0.60f, 0.86f, 0.95f, 0.91f, 0.97f, 0.93f, 0.89f,
+        0.96f, 0.92f, 0.98f, 0.90f, 0.85f, 0.58f, 0.52f, 0.63f,
+        0.88f, 0.95f, 0.99f, 0.93f, 0.90f, 0.96f, 0.92f, 0.98f
+    };
+    // Variant 3: sharp shard — deep notches at irregular spacing so it doesn't
+    // read as a regular star.
+    static const float kRock3[N] = {
+        1.00f, 0.82f, 0.55f, 0.70f, 0.95f, 0.60f, 0.50f, 0.78f,
+        0.98f, 0.90f, 0.58f, 0.47f, 0.85f, 0.96f, 0.65f, 0.52f,
+        0.92f, 1.00f, 0.72f, 0.49f, 0.68f, 0.94f, 0.88f, 0.55f,
+        0.46f, 0.75f, 0.99f, 0.84f, 0.57f, 0.66f, 0.91f, 0.73f
+    };
+    // Variant 4: lumpy potato — smooth low-frequency bumps, slightly oblong.
+    static const float kRock4[N] = {
+        0.95f, 0.98f, 1.00f, 0.97f, 0.92f, 0.85f, 0.79f, 0.75f,
+        0.73f, 0.75f, 0.80f, 0.86f, 0.91f, 0.94f, 0.93f, 0.90f,
+        0.86f, 0.83f, 0.82f, 0.84f, 0.88f, 0.93f, 0.97f, 0.99f,
+        0.98f, 0.94f, 0.89f, 0.83f, 0.78f, 0.76f, 0.80f, 0.88f
+    };
+    pushAsteroid(SHAPE_ASTEROID,   kRock1);
+    pushAsteroid(SHAPE_ASTEROID_2, kRock2);
+    pushAsteroid(SHAPE_ASTEROID_3, kRock3);
+    pushAsteroid(SHAPE_ASTEROID_4, kRock4);
 
     // QUAD: spans [-1,1] on both axes (used for HUD rectangles / digit segments).
     shapeFirst_[SHAPE_QUAD] = (uint32_t)(v.size() / 2);
@@ -600,6 +631,7 @@ void VkRenderer::recordCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex,
         p.mtx[0] = c.mtx[0]; p.mtx[1] = c.mtx[1];
         p.mtx[2] = c.mtx[2]; p.mtx[3] = c.mtx[3];
         p.trans[0] = c.tx; p.trans[1] = c.ty;
+        p.style[0] = c.style; p.style[1] = c.seed;
         p.color[0] = c.color[0]; p.color[1] = c.color[1];
         p.color[2] = c.color[2]; p.color[3] = c.color[3];
         vkCmdPushConstants(cb, pipelineLayout_,

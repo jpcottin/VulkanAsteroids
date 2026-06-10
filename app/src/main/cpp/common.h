@@ -15,7 +15,16 @@ enum Shape {
     SHAPE_SHIP_WINGS = 3,   // wide swept wings layer (dark blue-gray)
     SHAPE_SHIP_BODY  = 4,   // narrow fuselage layer (bright cyan)
     SHAPE_SHIP_NOSE  = 5,   // sharp nose spike layer (white)
+    SHAPE_ASTEROID_2 = 6,   // asteroid silhouette variant: chunky boulder
+    SHAPE_ASTEROID_3 = 7,   // asteroid silhouette variant: sharp shard
+    SHAPE_ASTEROID_4 = 8,   // asteroid silhouette variant: lumpy potato
     SHAPE_COUNT
+};
+
+// Fragment-shader fill styles (DrawCmd::style).
+enum FillStyle {
+    STYLE_FLAT = 0,   // solid push-constant colour (default)
+    STYLE_ROCK = 1,   // procedural fbm rock surface, seeded per draw
 };
 
 // One draw: a 2x2 linear transform + NDC translation + RGBA colour, applied to a shape.
@@ -24,5 +33,7 @@ struct DrawCmd {
     float mtx[4];   // m00, m01, m10, m11
     float tx, ty;   // NDC translation
     float color[4]; // r, g, b, a
+    float style;    // FillStyle (as float — goes straight into the push constants)
+    float seed;     // per-draw noise seed for STYLE_ROCK
     int shape;
 };
