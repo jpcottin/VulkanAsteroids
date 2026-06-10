@@ -24,6 +24,12 @@ public:
     void render(std::vector<DrawCmd>& out);
     void clearColor(float out[3]) const;
 
+    // True on static screens (title / game over / win) where the main loop may
+    // throttle the frame rate to save battery.
+    bool isIdleScreen() const {
+        return state_ == TITLE || state_ == GAME_OVER || state_ == WIN;
+    }
+
 public:
     // Exposed so tests can construct specific asteroid variants.
     enum AsteroidType { AT_NORMAL = 0, AT_FAST = 1, AT_ARMORED = 2 };
@@ -84,6 +90,15 @@ private:
     void spawnAsteroid(bool ambient);
     void splitAsteroid(const Asteroid& parent);
     void randomizeRockVisuals(Asteroid& a);
+    // PLAYING-state update steps, called in this order from update().
+    void updatePowerUps(float dt);
+    void updateBossFight(float dt);
+    void updateShipMotion(float dt);
+    void updateAsteroids(float dt);
+    void updateBullets(float dt);
+    void removeDeadEntities();
+    void checkLevelClear();
+    void applyShipHit();
     void spawnPowerUp(float x, float y);
     void spawnBoss();
     bool leftHeld() const;
@@ -167,6 +182,7 @@ public:
         a.gen = gen; a.hp = hp; a.type = type; a.alive = true;
         asteroids_.push_back(a);
     }
+    void spawnTestPowerUp(float x, float y) { spawnPowerUp(x, y); }
     bool shieldActiveForTest()     const { return shieldActive_; }
     bool spreadActiveForTest()     const { return spreadActive_; }
     bool speedBoostActiveForTest() const { return speedBoostActive_; }

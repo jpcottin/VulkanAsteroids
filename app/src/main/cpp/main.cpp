@@ -4,6 +4,7 @@
 #include <vector>
 #include <jni.h>
 #include <thread>
+#include <chrono>
 
 #include "common.h"
 #include "vk_renderer.h"
@@ -178,6 +179,13 @@ void android_main(android_app* app) {
                 fpsAccum  = 0.0f;
                 fpsFrames = 0;
             }
+
+            // Idle screens (title / game over / win) don't need 60 fps.
+            // Sleeping past one 60 Hz vsync period makes the FIFO present
+            // snap to every second vsync (~30 fps), saving battery. A plain
+            // 16 ms sleep would only overlap the existing present-wait.
+            if (engine.game.isIdleScreen())
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
         }
     }
 }

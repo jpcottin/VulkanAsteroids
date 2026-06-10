@@ -494,6 +494,22 @@ TEST(Settings, AutoRunPersistedAcrossSaveLoad) {
     rmdir(dir);
 }
 
+TEST(Settings, EdgeTapDoesNotToggleSound) {
+    // Rows must only respond across the label-to-toggle span, not at the
+    // extreme screen edge (x-bound regression test).
+    Game g;
+    g.setViewport(kW, kH);
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inSettingsForTest());
+    ASSERT_TRUE(g.soundEnabledForTest());
+    g.onPointerDown(0, 1070.f, kSoundPY);  // far right edge, sound-row height
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_TRUE(g.soundEnabledForTest());  // outside x-bounds — no toggle
+}
+
 TEST(Settings, FirstFingerWinsForTapPosition) {
     // Multi-touch race: second finger landing on the gear must not override the
     // first finger's tap coordinates (first-wins fix).
@@ -527,6 +543,19 @@ TEST(AutoRun, MovesShipTowardTarget) {
     g.update(1.0f);  // let ship settle
     float xBefore = g.shipX();
     g.spawnTestAsteroid(0.4f, 0.30f, 0.06f, 2);  // above and to the right
+    g.setAutoRunForTest(true);
+    g.update(0.3f);
+    EXPECT_GT(g.shipX(), xBefore);
+}
+
+TEST(AutoRun, SteersTowardPowerUp) {
+    // No asteroids, one power-up falling to the right of the ship — the AI
+    // should steer toward it to collect (instead of idling at centre).
+    Game g;
+    startPlaying(g);
+    g.update(1.0f);  // settle (dt clamps to 0.05 s per call)
+    float xBefore = g.shipX();
+    g.spawnTestPowerUp(0.30f, -0.40f);  // above and to the right, falling
     g.setAutoRunForTest(true);
     g.update(0.3f);
     EXPECT_GT(g.shipX(), xBefore);

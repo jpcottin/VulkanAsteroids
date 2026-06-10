@@ -30,7 +30,7 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 - **Background music:** procedurally synthesised ambient space track (A-minor pad + bass + arpeggio) starts with each new game.
 - **Power-up collection sound:** rising sparkle arpeggio on pickup.
 - **Settings:** gear icon (top-right) opens an overlay from any game state. Toggles: Sound on/off (persisted to disk), Auto Run. Both preferences survive app restarts.
-- **Auto Run:** AI autopilot mode — the ship steers autonomously, evades threats, aligns to targets, and fires. Activate from Settings; gear turns green with a pulsing "AUTO" label while active.
+- **Auto Run:** AI autopilot mode — the ship steers autonomously, evades threats, intercepts falling power-ups, aligns to targets, and fires. Activate from Settings; gear turns green with a pulsing "AUTO" label while active.
 
 ## Tech
 
@@ -80,12 +80,12 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-38 tests covering ship physics, input zones, bullets, spread shot, speed
+40 tests covering ship physics, input zones, bullets, spread shot, speed
 boost, asteroid splitting, combo multiplier, armored asteroid HP, boss
 spawn, power-up session isolation, settings state machine (gear tap, back
-button, sound/auto-run toggles, persistence, multi-touch tap race), and
-auto-run AI (fire alignment, lateral steering). Run on a connected device
-or emulator:
+button, sound/auto-run toggles, row hit-bounds, persistence, multi-touch
+tap race), and auto-run AI (fire alignment, lateral steering, power-up
+interception). Run on a connected device or emulator:
 
 ```bash
 # ARM device (default)
@@ -111,7 +111,7 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs 38 Google Test cases on an API-34 x86\_64 emulator | — |
+| **Native Tests** | Runs 40 Google Test cases on an API-34 x86\_64 emulator | — |
 | **Smoke Test** | Runs the Android instrumented test; captures an in-game screenshot via `UiAutomation` | `smoke-screenshot`, `smoke-test-results`, `smoke-logcat` |
 
 ## License
