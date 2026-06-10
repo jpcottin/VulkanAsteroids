@@ -39,8 +39,11 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 - **Hand-written Vulkan 2D renderer** — one graphics pipeline, push-constant
   transforms, flat-shaded primitives. Ship rendered as three layered shapes (dark
   blue-gray swept wings, bright cyan fuselage, white nose spike) matching the app
-  icon style. Asteroids use a 32-vertex irregular polygon with aggressive radius
-  variation for a jagged rocky surface. Bullets are two-layer laser bolts (glow +
+  icon style. Asteroids come in four 32-vertex silhouette variants (jagged,
+  boulder, shard, potato) with a slight random squash, shaded per-pixel in the
+  fragment shader: 3-octave fbm value noise, hash-placed crater pockets with lit
+  rims, and fake-sphericity rim darkening — all seeded per rock so no two look
+  alike, no textures involved. Bullets are two-layer laser bolts (glow +
   bright core). Two-speed parallax starfield (60 far + 20 near stars). Stroke
   vector font for the in-game title; 7-segment display font for HUD numbers.
   Asteroid destruction spawns a visual

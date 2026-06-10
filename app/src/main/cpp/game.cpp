@@ -287,9 +287,22 @@ void Game::startLevel(int level) {
     state_ = PLAYING;
 }
 
+// Randomize the purely visual rock attributes: noise seed, silhouette variant,
+// and squash. Shared by fresh spawns and split children.
+void Game::randomizeRockVisuals(Asteroid& a) {
+    static const int kShapes[] = {
+        SHAPE_ASTEROID, SHAPE_ASTEROID_2, SHAPE_ASTEROID_3, SHAPE_ASTEROID_4
+    };
+    const int n = (int)(sizeof(kShapes) / sizeof(kShapes[0]));
+    a.seed   = frange(0.0f, 64.0f);
+    a.squash = frange(0.88f, 1.12f);
+    a.shape  = kShapes[(int)(frand() * n) % n];  // frand() < 1, so index <= n-1
+}
+
 void Game::spawnAsteroid(bool ambient) {
     Asteroid a;
     a.r = frange(0.05f, 0.11f);
+    randomizeRockVisuals(a);
     a.x = frange(-asp_ + a.r, asp_ - a.r);
     a.y = -1.15f - a.r;
     a.vx = 0.0f;
@@ -351,6 +364,7 @@ void Game::splitAsteroid(const Asteroid& a) {
         child.spin = frange(-3.5f, 3.5f);
         child.rot  = frange(0.0f, 6.28f);
         child.cr = a.cr; child.cg = a.cg; child.cb = a.cb;
+        randomizeRockVisuals(child);
         child.gen  = a.gen + 1;
         child.type = AT_NORMAL;  // split children are never armored — visual promise matches HP
         child.hp   = 1;
@@ -759,7 +773,8 @@ void Game::update(float dt) {
 
 // ---- drawing helpers ----
 void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
-                float sx, float sy, float rot, float r, float g, float b, float a) {
+                float sx, float sy, float rot, float r, float g, float b, float a,
+                float style, float seed) {
     float c = cosf(rot), s = sinf(rot);
     DrawCmd d;
     d.mtx[0] = sx * c / asp_;
@@ -769,6 +784,8 @@ void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
     d.tx = wx / asp_ + shakeX_;
     d.ty = wy + shakeY_;
     d.color[0] = r; d.color[1] = g; d.color[2] = b; d.color[3] = a;
+    d.style = style;
+    d.seed = seed;
     d.shape = shape;
     out.push_back(d);
 }
@@ -1075,23 +1092,25 @@ void Game::render(std::vector<DrawCmd>& out) {
         emit(out, SHAPE_QUAD, s.x * asp_, s.y, s.size, s.size, 0.0f,
              0.85f, 0.88f, 1.00f, 0.90f);
 
-    // asteroids — armored ones get a brighter outline ring to signal extra HP
+    // asteroids — procedural rock surface seeded per rock, slight squash for
+    // silhouette variety; armored ones get a brighter outline ring for extra HP
     for (auto& a : asteroids_) {
-        emit(out, SHAPE_ASTEROID, a.x, a.y, a.r, a.r, a.rot, a.cr, a.cg, a.cb, 1.0f);
+        emit(out, a.shape, a.x, a.y, a.r * a.squash, a.r / a.squash, a.rot,
+             a.cr, a.cg, a.cb, 1.0f, (float)STYLE_ROCK, a.seed);
         if (a.type == AT_ARMORED && a.hp > 0) {
             float pulse = 0.55f + 0.35f * sinf(animTime_ * 5.0f);
-            emit(out, SHAPE_ASTEROID, a.x, a.y, a.r * 1.22f, a.r * 1.22f, -a.rot,
+            emit(out, a.shape, a.x, a.y, a.r * 1.22f, a.r * 1.22f, -a.rot,
                  0.95f, 0.55f, 0.15f, pulse * 0.45f);
         }
     }
 
-    // boss — two concentric rings so it reads differently from regular asteroids
+    // boss — rocky core + inner layer, pulsing flat ring so it reads as a threat
     if (bossActive_ && boss_.alive) {
         float bpulse = 0.7f + 0.3f * sinf(animTime_ * 3.0f);
         emit(out, SHAPE_ASTEROID, boss_.x, boss_.y, boss_.r, boss_.r, boss_.rot,
-             0.75f, 0.20f, 0.10f, 1.0f);
-        emit(out, SHAPE_ASTEROID, boss_.x, boss_.y, boss_.r * 0.65f, boss_.r * 0.65f,
-             -boss_.rot * 1.5f, 0.95f, 0.45f, 0.10f, 0.9f);
+             0.75f, 0.20f, 0.10f, 1.0f, (float)STYLE_ROCK, 7.31f);
+        emit(out, SHAPE_ASTEROID_4, boss_.x, boss_.y, boss_.r * 0.65f, boss_.r * 0.65f,
+             -boss_.rot * 1.5f, 0.95f, 0.45f, 0.10f, 0.9f, (float)STYLE_ROCK, 23.7f);
         emit(out, SHAPE_ASTEROID, boss_.x, boss_.y, boss_.r * 1.15f, boss_.r * 1.15f,
              boss_.rot * 0.7f, 1.0f, 0.30f, 0.05f, bpulse * 0.35f);
     }

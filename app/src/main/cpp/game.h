@@ -34,6 +34,9 @@ private:
     struct Asteroid {
         float x, y, vx, vy, r, rot, spin;
         float cr, cg, cb;
+        float seed   = 0.0f;            // per-rock noise seed for STYLE_ROCK
+        float squash = 1.0f;            // visual x/y aspect (collision stays circular)
+        int   shape  = SHAPE_ASTEROID;  // silhouette variant
         int gen;          // 0=large (splits), 1=medium (splits), 2=small (no split)
         int hp;           // hit points: 1 normal/fast, 2 armored
         AsteroidType type;
@@ -80,6 +83,7 @@ private:
     void startLevel(int level);
     void spawnAsteroid(bool ambient);
     void splitAsteroid(const Asteroid& parent);
+    void randomizeRockVisuals(Asteroid& a);
     void spawnPowerUp(float x, float y);
     void spawnBoss();
     bool leftHeld() const;
@@ -92,8 +96,10 @@ private:
     void spawnDebris(float x, float y, float r, float cr, float cg, float cb);
 
     // emit one shape: world centre (wx,wy), world half-extents (sx,sy), rotation, rgba.
+    // style/seed select the fragment-shader fill (STYLE_FLAT default, STYLE_ROCK + seed).
     void emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
-              float sx, float sy, float rot, float r, float g, float b, float a);
+              float sx, float sy, float rot, float r, float g, float b, float a,
+              float style = (float)STYLE_FLAT, float seed = 0.0f);
     void drawDigit(std::vector<DrawCmd>& out, int d, float cx, float cy,
                    float h, float r, float g, float b, float a);
     void drawNumber(std::vector<DrawCmd>& out, int value, float leftX, float cy,
