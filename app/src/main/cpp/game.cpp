@@ -4,11 +4,16 @@
 #include <cstdio>
 #include <cstring>
 
-// ---- level tuning (1..5, very easy -> hard) ----
+// ---- level tuning (1..10, very easy -> hard) ----
 static int clampLevel(int L) { return L < 1 ? 1 : (L > 10 ? 10 : L); }
 static float levelFall(int L)   { return 0.50f + 0.08f * (clampLevel(L) - 1); }
 static float levelSpawn(int L)  { return 1.00f - 0.07f * (clampLevel(L) - 1); }
-static int   levelGoal(int L)   { return 10 + 2 * clampLevel(L); }
+static int   levelGoal(int L)   {
+    int c = clampLevel(L);
+    int goal = 10 + 2 * c;            // gentle base ramp (levels 1..5)
+    if (c > 5) goal += 3 * (c - 5);   // steeper climb for the late game so 8/9 don't end so fast
+    return goal;
+}
 
 static const float kStarSpeed  = 0.18f;
 static const float kGravity    = 0.90f;   // ship falls at this acceleration
@@ -248,7 +253,7 @@ void Game::checkHighScore() {
 
 void Game::startGame() {
     score_ = 0;
-    lives_ = 3;
+    lives_ = 5;
     newHighScore_     = false;
     newHighScoreRank_ = -1;
     comboCount_ = 0; comboTimer_ = 0.0f; comboDisplayTimer_ = 0.0f;
@@ -346,7 +351,7 @@ void Game::spawnBoss() {
     boss_.rot  = 0.0f;
     boss_.spin = 0.25f;
     boss_.r    = 0.22f;
-    boss_.hp   = boss_.maxHp = 6;
+    boss_.hp   = boss_.maxHp = 12;
     boss_.alive = true;
     bossActive_ = true;
     // Boss replaces normal asteroid spawning at level 10.
