@@ -29,7 +29,7 @@ static void startPlaying(Game& g) {
 TEST(InitialState, LivesAndScore) {
     Game g;
     startPlaying(g);
-    EXPECT_EQ(g.lives(), 3);
+    EXPECT_EQ(g.lives(), 5);
     EXPECT_EQ(g.score(), 0L);
 }
 
@@ -359,7 +359,7 @@ TEST(Boss, SpawnsAtLevel10) {
 }
 
 TEST(Boss, HasCorrectInitialHP) {
-    // Boss should start with maxHp = 6 per spawnBoss() implementation.
+    // Boss should start with maxHp = 12 per spawnBoss() implementation.
     // We can't reach level 10 easily in a unit test but can verify the struct default.
     Game g;
     startPlaying(g);
