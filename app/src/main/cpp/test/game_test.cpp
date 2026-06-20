@@ -390,6 +390,16 @@ TEST(PowerUp, NotCarriedToNewGame) {
     EXPECT_EQ(g.bulletCount(), 1);
 }
 
+TEST(PowerUp, CollectingAwardsPoints) {
+    // Flying into a power-up grants 25 * level_ points (level 1 here).
+    Game g;
+    startPlaying(g);
+    ASSERT_EQ(g.score(), 0L);
+    g.spawnTestPowerUp(g.shipX(), g.shipY());  // spawn right on top of the ship
+    g.update(0.016f);                          // collected this frame
+    EXPECT_EQ(g.score(), 25L);
+}
+
 // ── Settings & gear icon ──────────────────────────────────────────────────────
 
 // Gear icon pixel position for the test viewport (1080×2400, asp=0.45).
@@ -559,4 +569,27 @@ TEST(AutoRun, SteersTowardPowerUp) {
     g.setAutoRunForTest(true);
     g.update(0.3f);
     EXPECT_GT(g.shipX(), xBefore);
+}
+
+TEST(AutoRun, WantsToCollectClearPowerUp) {
+    // Clear path to an off-axis power-up → AI commits to collecting it.
+    Game g;
+    startPlaying(g);
+    g.setAutoRunForTest(true);
+    g.spawnTestPowerUp(g.shipX() + 0.30f, g.shipY() - 0.40f);  // up & to the right
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiWantsCollectForTest());
+}
+
+TEST(AutoRun, SkipsPowerUpBlockedByAsteroid) {
+    // An asteroid sitting in the steering corridor (but outside the 0.22 evade
+    // radius) must make the AI decline to chase the power-up through it.
+    Game g;
+    startPlaying(g);
+    g.setAutoRunForTest(true);
+    float sx = g.shipX(), sy = g.shipY();
+    g.spawnTestPowerUp(sx + 0.30f, sy - 0.40f);            // up & to the right
+    g.spawnTestAsteroid(sx + 0.15f, sy - 0.30f, 0.05f, 2); // blocks the corridor
+    g.update(0.016f);
+    EXPECT_FALSE(g.aiWantsCollectForTest());
 }
