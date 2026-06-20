@@ -111,8 +111,8 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs 40 Google Test cases on an API-34 x86\_64 emulator | — |
-| **Smoke Test** | Runs the Android instrumented test; captures an in-game screenshot via `UiAutomation` | `smoke-screenshot`, `smoke-test-results`, `smoke-logcat` |
+| **Native Tests** | Runs 43 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators (API 34 + API 36); captures an in-game screenshot via `UiAutomation` | `smoke-screenshot-api{34,36}`, `smoke-test-results-api{34,36}`, `smoke-logcat-api{34,36}` |
 
 ## License
 
