@@ -15,7 +15,7 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 
 - **Goal:** clear each level by destroying or dodging enough asteroids.
 - **Progression:** 10 levels, each faster and denser than the last.
-- **Scoring:** +5×level per dodge, +10×level per kill, +100×level per cleared level.
+- **Scoring:** +5×level per dodge, +10×level per kill, +25×level per power-up collected, +100×level per cleared level.
 - **Lives:** 3 lives; invulnerability blinks after each hit.
 - **HUD:** score (top-left) · lives (top-center) · level (top-right).
 - **Ship banking:** the ship tilts ±20° into the direction of travel.
@@ -30,7 +30,7 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 - **Background music:** procedurally synthesised ambient space track (A-minor pad + bass + arpeggio) starts with each new game.
 - **Power-up collection sound:** rising sparkle arpeggio on pickup.
 - **Settings:** gear icon (top-right) opens an overlay from any game state. Toggles: Sound on/off (persisted to disk), Auto Run. Both preferences survive app restarts.
-- **Auto Run:** AI autopilot mode — the ship steers autonomously, evades threats, intercepts falling power-ups, aligns to targets, and fires. Activate from Settings; gear turns green with a pulsing "AUTO" label while active.
+- **Auto Run:** AI autopilot mode — the ship steers autonomously, evades threats, intercepts falling power-ups only when the path to them is clear of asteroids, aligns to targets, and fires. Activate from Settings; gear turns green with a pulsing "AUTO" label while active.
 
 ## Tech
 
@@ -80,12 +80,12 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-40 tests covering ship physics, input zones, bullets, spread shot, speed
+43 tests covering ship physics, input zones, bullets, spread shot, speed
 boost, asteroid splitting, combo multiplier, armored asteroid HP, boss
-spawn, power-up session isolation, settings state machine (gear tap, back
-button, sound/auto-run toggles, row hit-bounds, persistence, multi-touch
-tap race), and auto-run AI (fire alignment, lateral steering, power-up
-interception). Run on a connected device or emulator:
+spawn, power-up session isolation, power-up pickup scoring, settings state
+machine (gear tap, back button, sound/auto-run toggles, row hit-bounds,
+persistence, multi-touch tap race), and auto-run AI (fire alignment, lateral
+steering, power-up interception, declining blocked power-ups). Run on a connected device or emulator:
 
 ```bash
 # ARM device (default)
@@ -111,8 +111,8 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs 40 Google Test cases on an API-34 x86\_64 emulator | — |
-| **Smoke Test** | Runs the Android instrumented test; captures an in-game screenshot via `UiAutomation` | `smoke-screenshot`, `smoke-test-results`, `smoke-logcat` |
+| **Native Tests** | Runs 43 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators (API 34 + API 36); captures an in-game screenshot via `UiAutomation` | `smoke-screenshot-api{34,36}`, `smoke-test-results-api{34,36}`, `smoke-logcat-api{34,36}` |
 
 ## License
 

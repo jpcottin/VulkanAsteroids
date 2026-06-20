@@ -587,6 +587,7 @@ void Game::updatePowerUps(float dt) {
         float dx = pu.x - shipX_, dy = pu.y - shipY_;
         if (dx*dx + dy*dy < (puR + shipR_) * (puR + shipR_)) {
             pu.alive = false;
+            score_ += 25 * level_;
             if (pu.type == PU_SHIELD)      { shieldActive_ = true;     shieldTimer_     = kPowerUpDuration; }
             else if (pu.type == PU_SPREAD)  { spreadActive_ = true;     spreadTimer_     = kPowerUpDuration; }
             else                            { speedBoostActive_ = true; speedBoostTimer_ = kPowerUpDuration; }
@@ -1018,7 +1019,9 @@ void Game::updateAutoRun(float dt) {
         else if (shipX_ < -0.05f) aiRight_ = true;
     }
     // Power-up collection: steer to intercept the most quickly reachable
-    // power-up. Evasion always wins; collection outranks target alignment.
+    // power-up — but only when the path to it is clear. Evasion always wins;
+    // collection outranks target alignment.
+    const float kCollectMargin = 0.16f;  // safety buffer around the steering corridor
     const PowerUp* collect = nullptr;
     if (closestDist > kEvadeRadius) {
         float bestT = 1e9f;
@@ -1030,6 +1033,19 @@ void Game::updateAutoRun(float dt) {
             float tSteer = fabsf(pu.x - shipX_) / shipSpeed_;
             if (tSteer > tFall + 1.2f) continue;    // can't reach it before it escapes
             float t = tSteer > tFall ? tSteer : tFall;
+            // Skip if any asteroid currently sits in the steering corridor
+            // between the ship and the power-up (plus a safety margin).
+            float loX = fminf(shipX_, pu.x), hiX = fmaxf(shipX_, pu.x);
+            float loY = fminf(shipY_, pu.y), hiY = fmaxf(shipY_, pu.y);
+            bool pathClear = true;
+            for (auto& a : asteroids_) {
+                if (!a.alive) continue;
+                float m = kCollectMargin + a.r;
+                if (a.x > loX - m && a.x < hiX + m && a.y > loY - m && a.y < hiY + m) {
+                    pathClear = false; break;
+                }
+            }
+            if (!pathClear) continue;
             if (t < bestT) { bestT = t; collect = &pu; }
         }
         if (collect) {
@@ -1039,6 +1055,7 @@ void Game::updateAutoRun(float dt) {
             else if (dx < -kSteerDeadband) aiLeft_  = true;
         }
     }
+    aiWantsCollect_ = (collect != nullptr);
 
     // Vertical: thrust to maintain preferred altitude; emergency if threat is very close
     bool emergency = closestDist < kEvadeRadius * 0.7f;

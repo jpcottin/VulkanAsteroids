@@ -195,6 +195,7 @@ public:
     bool inSettingsForTest()       const { return state_ == SETTINGS; }
     bool inTitleForTest()          const { return state_ == TITLE; }
     void setAutoRunForTest(bool v)       { autoRunActive_ = v; }
+    bool aiWantsCollectForTest()   const { return aiWantsCollect_; }
 #endif
 
 private:
@@ -266,10 +267,11 @@ private:
     char settingsPath_[512] = {};
 
     // --- auto-run AI ---
-    bool aiLeft_   = false;
-    bool aiRight_  = false;
-    bool aiThrust_ = false;
-    bool aiFire_   = false;
+    bool aiLeft_        = false;
+    bool aiRight_       = false;
+    bool aiThrust_      = false;
+    bool aiFire_        = false;
+    bool aiWantsCollect_ = false;  // last auto-run frame steered to collect a power-up
 
     std::vector<Asteroid>  asteroids_;
     std::vector<Bullet>    bullets_;

@@ -39,8 +39,16 @@ jobs:
 
   # ── Native tests ─────────────────────────────────────────────────────────────
   test:
-    name: Native Tests
+    name: Native Tests (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 34
+            gpu: swiftshader_indirect
+          - api-level: 36
+            gpu: auto
 
     steps:
       - uses: actions/checkout@v6
@@ -67,18 +75,26 @@ jobs:
       - name: Run native tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api-level }}
           arch: x86_64
           profile: pixel_6
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
           disable-animations: true
           emulator-boot-timeout: 900
           script: ./gradlew runNativeTests -PtestAbi=x86_64 --no-daemon
 
   # ── Smoke test: instrumented launch test + screenshot ─────────────────────────
   smoke:
-    name: Smoke Test
+    name: Smoke Test (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 34
+            gpu: swiftshader_indirect
+          - api-level: 36
+            gpu: auto
 
     steps:
       - uses: actions/checkout@v6
@@ -105,10 +121,10 @@ jobs:
       - name: Run instrumented smoke test and capture screenshot
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api-level }}
           arch: x86_64
           profile: pixel_6
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
           disable-animations: true
           emulator-boot-timeout: 900
           script: |
@@ -126,7 +142,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: smoke-test-results
+          name: smoke-test-results-api${{ matrix.api-level }}
           path: app/build/outputs/androidTest-results/
           if-no-files-found: warn
 
@@ -134,7 +150,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: smoke-screenshot
+          name: smoke-screenshot-api${{ matrix.api-level }}
           path: screenshot.png
           if-no-files-found: warn
 
@@ -142,6 +158,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: smoke-logcat
+          name: smoke-logcat-api${{ matrix.api-level }}
           path: logcat.txt
           if-no-files-found: warn
