@@ -85,16 +85,49 @@ jobs:
 
   # ── Smoke test: instrumented launch test + screenshot ─────────────────────────
   smoke:
-    name: Smoke Test (API ${{ matrix.api-level }})
+    name: Smoke Test (API ${{ matrix.api-level }}${{ matrix.suffix && format(' {0}', matrix.suffix) || '' }})
     runs-on: ubuntu-latest
+    # API 37.0 ps16k legs are preview images; run them non-blocking so a flaky
+    # or unavailable preview emulator never gates a PR.
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - api-level: 34
+          # Stock x86_64 legs — these gate (blocking).
+          - api-level: '34'
             gpu: swiftshader_indirect
-          - api-level: 36
+          - api-level: '36'
             gpu: auto
+          # API 37.0 (16 KB page-size image) across three GPU backends.
+          # Needs the GLDirectMem feature; runs with 4 GB RAM / 4 cores.
+          - api-level: '37.0'
+            suffix: swiftshader
+            target: google_apis_ps16k
+            gpu: swiftshader_indirect
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator
+          - api-level: '37.0'
+            suffix: lavapipe
+            target: google_apis_ps16k
+            gpu: lavapipe
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator
+          - api-level: '37.0'
+            suffix: auto
+            target: google_apis_ps16k
+            gpu: auto
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator
 
     steps:
       - uses: actions/checkout@v6
@@ -123,11 +156,17 @@ jobs:
         with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
+          target: ${{ matrix.target || 'default' }}
+          channel: ${{ matrix.channel || 'stable' }}
           profile: pixel_6
-          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
+          ram-size: ${{ matrix.ram-size }}
+          cores: ${{ matrix.cores || 2 }}
+          disk-size: ${{ matrix.disk-size }}
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection ${{ matrix.extra-options || '' }}
           disable-animations: true
           emulator-boot-timeout: 900
           script: |
+            adb wait-for-device
             ./gradlew connectedAndroidTest --no-daemon
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell input keyevent KEYCODE_WAKEUP
@@ -142,7 +181,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: smoke-test-results-api${{ matrix.api-level }}
+          name: smoke-test-results-api${{ matrix.api-level }}${{ matrix.suffix && format('-{0}', matrix.suffix) || '' }}
           path: app/build/outputs/androidTest-results/
           if-no-files-found: warn
 
@@ -150,7 +189,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: smoke-screenshot-api${{ matrix.api-level }}
+          name: smoke-screenshot-api${{ matrix.api-level }}${{ matrix.suffix && format('-{0}', matrix.suffix) || '' }}
           path: screenshot.png
           if-no-files-found: warn
 
@@ -158,6 +197,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: smoke-logcat-api${{ matrix.api-level }}
+          name: smoke-logcat-api${{ matrix.api-level }}${{ matrix.suffix && format('-{0}', matrix.suffix) || '' }}
           path: logcat.txt
           if-no-files-found: warn
