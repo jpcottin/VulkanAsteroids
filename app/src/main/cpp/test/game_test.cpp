@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include "game.h"
@@ -592,4 +593,33 @@ TEST(AutoRun, SkipsPowerUpBlockedByAsteroid) {
     g.spawnTestAsteroid(sx + 0.15f, sy - 0.30f, 0.05f, 2); // blocks the corridor
     g.update(0.016f);
     EXPECT_FALSE(g.aiWantsCollectForTest());
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────────
+
+// The end-screen score must shrink to fit: at the fixed 0.30 glyph height,
+// four digits already touch the sides of a portrait phone and six run far
+// past the edges. Every quad (the digit segments are quads) must stay inside
+// NDC once the dust has settled — asteroids and ship layers are other shapes,
+// and background stars never reach past ~1.04.
+TEST(Render, EndScreenScoreFitsTheScreen) {
+    Game g;
+    startPlaying(g);
+    g.setScoreForTest(123456);                     // six digits
+    for (int hit = 0; hit < 5; hit++) {            // burn all five lives
+        g.clearInvulnForTest();
+        g.spawnTestAsteroid(g.shipX(), g.shipY(), 0.06f, 1);
+        g.update(0.016f);
+    }
+    ASSERT_TRUE(g.isGameOverForTest());
+    for (int i = 0; i < 60; i++) g.update(1.0f / 60.0f);   // shake/debris settle
+    std::vector<DrawCmd> cmds;
+    g.render(cmds);
+    ASSERT_GT(cmds.size(), 0u);
+    for (const auto& c : cmds) {
+        if (c.shape != SHAPE_QUAD) continue;
+        float ext = fabsf(c.mtx[0]) + fabsf(c.mtx[1]);     // NDC half-width
+        EXPECT_LE(fabsf(c.tx) + ext, 1.05f)
+            << "quad past the screen edge at tx=" << c.tx;
+    }
 }
