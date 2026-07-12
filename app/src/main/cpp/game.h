@@ -196,6 +196,9 @@ public:
     bool inTitleForTest()          const { return state_ == TITLE; }
     void setAutoRunForTest(bool v)       { autoRunActive_ = v; }
     bool aiWantsCollectForTest()   const { return aiWantsCollect_; }
+    void setScoreForTest(long s)         { score_ = s; }
+    void clearInvulnForTest()            { invuln_ = 0.0f; }
+    bool isGameOverForTest()       const { return state_ == GAME_OVER; }
 #endif
 
 private:
