@@ -357,6 +357,46 @@ jobs:
       - name: Run instrumented tests
         run: ./gradlew connectedAndroidTest --no-daemon
 
+      # Parity with the smoke job: launch the NativeActivity and capture a
+      # screenshot plus a filtered logcat.
+      - name: Capture screenshot and logcat
+        if: always()
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK/platform-tools:$PATH"
+          adb install -r app/build/outputs/apk/debug/app-debug.apk || true
+          adb shell input keyevent KEYCODE_WAKEUP || true
+          adb shell wm dismiss-keyguard || true
+          adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity || true
+          for _ in $(seq 1 15); do adb shell dumpsys window windows | grep -q "com.jpcottin.vulkanasteroids" && break; sleep 1; done || true
+          sleep 4
+          adb exec-out screencap -p > screenshot.png || true
+          adb logcat -d Asteroids:V AndroidRuntime:E *:S > logcat.txt || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-smoke-test-results
+          path: app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-smoke-screenshot
+          path: screenshot.png
+          if-no-files-found: warn
+
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-smoke-logcat
+          path: logcat.txt
+          if-no-files-found: warn
+
       - name: Stop emulator
         if: always()
         run: android emulator stop "$DEVICE" || true
