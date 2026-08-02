@@ -1,13 +1,14 @@
 #include "game.h"
 #include "audio.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
 // ---- level tuning (1..10, very easy -> hard) ----
 static int clampLevel(int L) { return L < 1 ? 1 : (L > 10 ? 10 : L); }
-static float levelFall(int L)   { return 0.50f + 0.08f * (clampLevel(L) - 1); }
-static float levelSpawn(int L)  { return 1.00f - 0.07f * (clampLevel(L) - 1); }
+static float levelFall(int L)   { return 0.50f + 0.08f * (float)(clampLevel(L) - 1); }
+static float levelSpawn(int L)  { return 1.00f - 0.07f * (float)(clampLevel(L) - 1); }
 static int   levelGoal(int L)   {
     int c = clampLevel(L);
     int goal = 10 + 2 * c;            // gentle base ramp (levels 1..5)
@@ -33,7 +34,7 @@ float Game::frand() {
     uint32_t x = rng_;
     x ^= x << 13; x ^= x >> 17; x ^= x << 5;
     rng_ = x;
-    return (x & 0xFFFFFF) / float(0x1000000);
+    return float(x & 0xFFFFFF) / float(0x1000000);
 }
 float Game::frange(float a, float b) { return a + (b - a) * frand(); }
 
@@ -70,34 +71,32 @@ void Game::setViewport(int w, int h) {
 
 bool Game::leftHeld() const {
     if (autoRunActive_ && aiLeft_) return true;
-    for (auto& p : pointers_) {
-        if (!p.active || p.x >= vw_ * 0.5f) continue;
-        if (p.x < vw_ * 0.30f && p.y > vh_ * 0.72f) continue;
+    return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
+        if (!p.active || p.x >= (float)vw_ * 0.5f) return false;
+        if (p.x < (float)vw_ * 0.30f && p.y > (float)vh_ * 0.72f) return false;
         return true;
-    }
-    return false;
+    });
 }
 bool Game::rightHeld() const {
     if (autoRunActive_ && aiRight_) return true;
-    for (auto& p : pointers_) {
-        if (!p.active || p.x < vw_ * 0.5f) continue;
-        if (p.x > vw_ * 0.70f && p.y > vh_ * 0.72f) continue;
-        if (isGearTap(p.x, p.y)) continue;  // gear area excluded from movement
+    return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
+        if (!p.active || p.x < (float)vw_ * 0.5f) return false;
+        if (p.x > (float)vw_ * 0.70f && p.y > (float)vh_ * 0.72f) return false;
+        if (isGearTap(p.x, p.y)) return false;  // gear area excluded from movement
         return true;
-    }
-    return false;
+    });
 }
 bool Game::thrustHeld() const {
     if (autoRunActive_ && aiThrust_) return true;
-    for (auto& p : pointers_)
-        if (p.active && p.x < vw_ * 0.30f && p.y > vh_ * 0.72f) return true;
-    return false;
+    return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
+        return p.active && p.x < (float)vw_ * 0.30f && p.y > (float)vh_ * 0.72f;
+    });
 }
 bool Game::fireHeld() const {
     if (autoRunActive_ && aiFire_) return true;
-    for (auto& p : pointers_)
-        if (p.active && p.x > vw_ * 0.70f && p.y > vh_ * 0.72f) return true;
-    return false;
+    return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
+        return p.active && p.x > (float)vw_ * 0.70f && p.y > (float)vh_ * 0.72f;
+    });
 }
 
 void Game::onPointerDown(int id, float x, float y) {
@@ -138,7 +137,7 @@ void Game::loadHighScores() {
     if (dataPath_[0] == '\0') return;
     FILE* f = fopen(dataPath_, "rb");
     if (!f) return;
-    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf;
+    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
     if (fread(&buf, sizeof(buf), 1, f) == 1 && buf.magic == kHsMagic) {
         int n = (int)buf.count < kMaxScores ? (int)buf.count : kMaxScores;
         for (int i = 0; i < n; i++) {
@@ -153,7 +152,7 @@ void Game::saveHighScores() {
     if (dataPath_[0] == '\0') return;
     FILE* f = fopen(dataPath_, "wb");
     if (!f) return;
-    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf;
+    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
     buf.magic = kHsMagic;
     buf.count = kMaxScores;
     for (int i = 0; i < kMaxScores; i++) {
@@ -200,8 +199,8 @@ void Game::saveSettings() {
 }
 
 bool Game::isGearTap(float px, float py) const {
-    float wy = 2.0f * py / vh_ - 1.0f;
-    float wx = (2.0f * px / vw_ - 1.0f) * asp_;
+    float wy = 2.0f * py / (float)vh_ - 1.0f;
+    float wx = (2.0f * px / (float)vw_ - 1.0f) * asp_;
     float dx = wx - (asp_ - kGearOffsetX), dy = wy - kGearWY;
     return dx*dx + dy*dy < 0.0081f;  // 0.09 world units radius
 }
@@ -323,13 +322,13 @@ void Game::spawnAsteroid(bool ambient) {
     a.hp   = 1;
 
     // Higher levels introduce fast and armored variants.
-    if (!ambient && level_ >= 7 && frand() < 0.18f + 0.02f * (level_ - 7)) {
+    if (!ambient && level_ >= 7 && frand() < 0.18f + 0.02f * (float)(level_ - 7)) {
         a.type = AT_ARMORED;
         a.hp   = 2;
         a.r   *= 1.15f;
         a.vy  *= 0.80f;
         a.cr   = 0.45f + tint; a.cg = 0.22f + tint * 0.3f; a.cb = 0.18f + tint * 0.2f;
-    } else if (!ambient && level_ >= 5 && frand() < 0.18f + 0.03f * (level_ - 5)) {
+    } else if (!ambient && level_ >= 5 && frand() < 0.18f + 0.03f * (float)(level_ - 5)) {
         a.type = AT_FAST;
         a.hp   = 1;
         a.r   *= 0.72f;
@@ -403,16 +402,18 @@ void Game::update(float dt) {
         p.t   += dt;
         if (p.t >= p.maxLife) p.alive = false;
     }
-    for (size_t i = particles_.size(); i-- > 0;)
-        if (!particles_[i].alive) particles_.erase(particles_.begin() + i);
+    particles_.erase(std::remove_if(particles_.begin(), particles_.end(),
+                                    [](const Particle& p) { return !p.alive; }),
+                     particles_.end());
 
     for (auto& e : explosions_) {
         if (!e.alive) continue;
         e.t += dt;
         if (e.t >= e.maxLife) e.alive = false;
     }
-    for (size_t i = explosions_.size(); i-- > 0;)
-        if (!explosions_[i].alive) explosions_.erase(explosions_.begin() + i);
+    explosions_.erase(std::remove_if(explosions_.begin(), explosions_.end(),
+                                     [](const Explosion& e) { return !e.alive; }),
+                      explosions_.end());
 
     // Stars scroll in every state for a sense of motion.
     for (auto& s : stars_) {
@@ -493,8 +494,9 @@ void Game::update(float dt) {
                 a.y += a.vy * dt; a.rot += a.spin * dt;
                 if (a.y - a.r > 1.1f) a.alive = false;
             }
-            for (size_t i = asteroids_.size(); i-- > 0;)
-                if (!asteroids_[i].alive) asteroids_.erase(asteroids_.begin() + i);
+            asteroids_.erase(std::remove_if(asteroids_.begin(), asteroids_.end(),
+                                            [](const Asteroid& a) { return !a.alive; }),
+                             asteroids_.end());
             if (state_ == GAME_OVER && asteroids_.size() < 4) {
                 spawnTimer_ -= dt;
                 if (spawnTimer_ <= 0.0f) { spawnAsteroid(true); spawnTimer_ = 0.9f; }
@@ -508,8 +510,8 @@ void Game::update(float dt) {
         }
         case SETTINGS: {
             if (tapped) {
-                float wy = 2.0f * tapY_ / vh_ - 1.0f;
-                float wx = (2.0f * tapX_ / vw_ - 1.0f) * asp_;
+                float wy = 2.0f * tapY_ / (float)vh_ - 1.0f;
+                float wx = (2.0f * tapX_ / (float)vw_ - 1.0f) * asp_;
                 const float kHitH = 0.12f;
                 // Rows respond only across the label-to-toggle span, not the
                 // full screen width (avoids accidental edge taps).
@@ -594,8 +596,9 @@ void Game::updatePowerUps(float dt) {
             if (audio_ && soundEnabled_) audio_->triggerPowerUp();
         }
     }
-    for (size_t i = powerUps_.size(); i-- > 0;)
-        if (!powerUps_[i].alive) powerUps_.erase(powerUps_.begin() + i);
+    powerUps_.erase(std::remove_if(powerUps_.begin(), powerUps_.end(),
+                                   [](const PowerUp& pu) { return !pu.alive; }),
+                    powerUps_.end());
 }
 
 void Game::updateBossFight(float dt) {
@@ -617,12 +620,12 @@ void Game::updateShipMotion(float dt) {
     // Horizontal movement + tilt
     int dir = (rightHeld() ? 1 : 0) - (leftHeld() ? 1 : 0);
     float effectiveSpeed = shipSpeed_ * (speedBoostActive_ ? 1.65f : 1.0f);
-    shipX_ += dir * effectiveSpeed * dt;
+    shipX_ += (float)dir * effectiveSpeed * dt;
     float lim = asp_ - shipScale_;
     if (shipX_ > lim) shipX_ = lim;
     if (shipX_ < -lim) shipX_ = -lim;
     // Smoothly lean into direction of travel (±20°)
-    float tiltTarget = dir * 0.35f;
+    float tiltTarget = (float)dir * 0.35f;
     shipTilt_ += (tiltTarget - shipTilt_) * 9.0f * dt;
 
     // Vertical thrust / gravity
@@ -771,10 +774,12 @@ void Game::updateBullets(float dt) {
 }
 
 void Game::removeDeadEntities() {
-    for (size_t i = asteroids_.size(); i-- > 0;)
-        if (!asteroids_[i].alive) asteroids_.erase(asteroids_.begin() + i);
-    for (size_t i = bullets_.size(); i-- > 0;)
-        if (!bullets_[i].alive) bullets_.erase(bullets_.begin() + i);
+    asteroids_.erase(std::remove_if(asteroids_.begin(), asteroids_.end(),
+                                    [](const Asteroid& a) { return !a.alive; }),
+                     asteroids_.end());
+    bullets_.erase(std::remove_if(bullets_.begin(), bullets_.end(),
+                                  [](const Bullet& b) { return !b.alive; }),
+                   bullets_.end());
 }
 
 void Game::checkLevelClear() {
@@ -793,7 +798,7 @@ void Game::checkLevelClear() {
 // ---- drawing helpers ----
 void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
                 float sx, float sy, float rot, float r, float g, float b, float a,
-                float style, float seed) {
+                float style, float seed) const {
     float c = cosf(rot), s = sinf(rot);
     DrawCmd d;
     d.mtx[0] = sx * c / asp_;
@@ -810,7 +815,7 @@ void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
 }
 
 void Game::drawDigit(std::vector<DrawCmd>& out, int dgt, float cx, float cy,
-                     float h, float r, float g, float b, float a) {
+                     float h, float r, float g, float b, float a) const {
     if (dgt < 0 || dgt > 9) return;
     int mask = kDigitSeg[dgt];
     float w = h * 0.60f;
@@ -830,7 +835,7 @@ void Game::drawDigit(std::vector<DrawCmd>& out, int dgt, float cx, float cy,
     if (mask & 64) seg(cx, cy, hSegX, hSegY);                   // g middle
 }
 
-int Game::numDigits(int v) const {
+int Game::numDigits(int v) {
     if (v <= 0) return 1;
     int n = 0;
     while (v > 0) { n++; v /= 10; }
@@ -838,7 +843,7 @@ int Game::numDigits(int v) const {
 }
 
 void Game::drawNumber(std::vector<DrawCmd>& out, int value, float firstCx, float cy,
-                      float h, float r, float g, float b, float a) {
+                      float h, float r, float g, float b, float a) const {
     if (value < 0) value = 0;
     int n = numDigits(value);
     float w = h * 0.60f;
@@ -850,12 +855,12 @@ void Game::drawNumber(std::vector<DrawCmd>& out, int value, float firstCx, float
     // digits[] is reversed; draw most-significant first.
     for (int i = 0; i < n; i++) {
         int dgt = digits[n - 1 - i];
-        drawDigit(out, dgt, firstCx + i * step, cy, h, r, g, b, a);
+        drawDigit(out, dgt, firstCx + (float)i * step, cy, h, r, g, b, a);
     }
 }
 
 void Game::drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
-                      float h, float r, float g, float b, float a) {
+                      float h, float r, float g, float b, float a) const {
     if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
     if (ch >= '0' && ch <= '9') { drawDigit(out, ch - '0', cx, cy, h, r, g, b, a); return; }
     if (ch < 'A' || ch > 'Z') return;
@@ -908,19 +913,19 @@ void Game::drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
 }
 
 void Game::drawText(std::vector<DrawCmd>& out, const char* text, float cx, float cy,
-                    float h, float r, float g, float b, float a) {
+                    float h, float r, float g, float b, float a) const {
     int total = 0;
     for (const char* p = text; *p; p++) total++;
     if (total == 0) return;
     float step = h * 0.95f;  // stroke font: wider spacing than 7-seg digits
-    float startX = cx - (total - 1) * step * 0.5f;
+    float startX = cx - (float)(total - 1) * step * 0.5f;
     for (int i = 0; text[i]; i++) {
         if (text[i] != ' ')
-            drawLetter(out, text[i], startX + i * step, cy, h, r, g, b, a);
+            drawLetter(out, text[i], startX + (float)i * step, cy, h, r, g, b, a);
     }
 }
 
-void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
+void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) const {
     // Left-side HUD: stacked power-up indicators with timer bars.
     // Each row: small diamond icon + horizontal timer bar.
     struct PU { bool active; float timer; float r, g, b; } pus[3] = {
@@ -933,7 +938,7 @@ void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
     float barMaxW = 0.16f;
     for (int i = 0; i < 3; i++) {
         if (!pus[i].active) continue;
-        float y  = -0.70f + i * 0.11f;
+        float y  = -0.70f + (float)i * 0.11f;
         float progress = pus[i].timer / kPowerUpDuration;
         float pulse = (pus[i].timer < 2.0f) ? (0.5f + 0.5f * sinf(animTime_ * 18.0f)) : 1.0f;
         // Icon diamond
@@ -950,7 +955,7 @@ void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
     }
 }
 
-void Game::drawComboIndicator(std::vector<DrawCmd>& out) {
+void Game::drawComboIndicator(std::vector<DrawCmd>& out) const {
     if (comboDisplayTimer_ <= 0.0f || comboCount_ < 2) return;
     float alpha = comboDisplayTimer_ / 0.9f;
     float h  = 0.075f + 0.015f * (1.0f - alpha); // slightly grows then fades
@@ -961,7 +966,7 @@ void Game::drawComboIndicator(std::vector<DrawCmd>& out) {
     drawDigit(out, comboCount_, cx + step * 0.5f, 0.62f, h * 1.2f, 1.0f, 0.85f, 0.10f, alpha);
 }
 
-void Game::drawBossHealthBar(std::vector<DrawCmd>& out) {
+void Game::drawBossHealthBar(std::vector<DrawCmd>& out) const {
     if (!bossActive_ || !boss_.alive) return;
     float progress = (float)boss_.hp / (float)boss_.maxHp;
     float barW = asp_ * 0.80f;
@@ -1074,7 +1079,7 @@ void Game::updateAutoRun(float dt) {
 }
 
 void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
-                         float r, float g, float b, float a) {
+                         float r, float g, float b, float a) const {
     // Circular body approximated by SHAPE_ASTEROID (32-vertex polygon)
     const float bodyR = size * 0.68f;
     emit(out, SHAPE_ASTEROID, cx, cy, bodyR, bodyR, 0.0f, r, g, b, a);
@@ -1084,7 +1089,7 @@ void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float siz
     const float toothHW = size * 0.20f;   // tooth half-width  (tangential)
     const float toothHH = size * 0.30f;   // tooth half-height (radial)
     for (int i = 0; i < 6; i++) {
-        float ang = i * 1.0472f;  // 60° apart
+        float ang = (float)i * 1.0472f;  // 60° apart
         emit(out, SHAPE_QUAD,
              cx + cosf(ang) * toothCR,
              cy + sinf(ang) * toothCR,
@@ -1096,7 +1101,7 @@ void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float siz
          0.03f, 0.04f, 0.09f, a);
 }
 
-void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
+void Game::drawSettingsScreen(std::vector<DrawCmd>& out) const {
     // Full-screen dark overlay
     emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f, 0.04f, 0.06f, 0.14f, 0.93f);
 
@@ -1139,7 +1144,7 @@ void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
 // portrait phone (~0.95 world units wide) at the full 0.30 height.
 static float endScoreHeight(int digits, float asp) {
     const float kMaxH = 0.30f;
-    float span = 0.87f * (digits - 1) + 0.60f;
+    float span = 0.87f * (float)(digits - 1) + 0.60f;
     float h = 2.0f * asp * 0.90f / span;   // fill at most 90% of the width
     return h < kMaxH ? h : kMaxH;
 }
@@ -1273,16 +1278,16 @@ void Game::render(std::vector<DrawCmd>& out) {
                    1.0f, 1.0f, 1.0f, 1.0f);
         // level number top-right (yellow), right-aligned — supports 2 digits at level 10
         int nd = numDigits(level_);
-        float levelFirstCx = asp_ - 0.06f - w * 0.5f - (nd - 1) * step;
+        float levelFirstCx = asp_ - 0.06f - w * 0.5f - (float)(nd - 1) * step;
         drawNumber(out, level_, levelFirstCx, -0.90f, h,
                    1.0f, 0.85f, 0.2f, 1.0f);
         // lives as small ship icons, top-center
         float ls = 0.03f, gap = 0.085f;
-        float startX = -(lives_ - 1) * gap * 0.5f;
+        float startX = -(float)(lives_ - 1) * gap * 0.5f;
         for (int i = 0; i < lives_; i++) {
-            emit(out, SHAPE_SHIP_WINGS, startX + i * gap, -0.90f, ls, ls, 0.0f,
+            emit(out, SHAPE_SHIP_WINGS, startX + (float)i * gap, -0.90f, ls, ls, 0.0f,
                  0.22f, 0.42f, 0.65f, 1.0f);
-            emit(out, SHAPE_SHIP_BODY,  startX + i * gap, -0.90f, ls, ls, 0.0f,
+            emit(out, SHAPE_SHIP_BODY,  startX + (float)i * gap, -0.90f, ls, ls, 0.0f,
                  0.28f, 0.72f, 0.92f, 1.0f);
         }
 
@@ -1366,7 +1371,7 @@ void Game::render(std::vector<DrawCmd>& out) {
              0.6f, 0.05f, 0.08f, 0.32f + 0.10f * pulse);
         int n = numDigits((int)score_);
         float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
-        float firstCx = -(n - 1) * fw * 0.5f;
+        float firstCx = -(float)(n - 1) * fw * 0.5f;
         // Gold pulsing score if new high score, white otherwise
         float sr = 1.0f, sg = newHighScore_ ? (0.75f + 0.20f*pulse) : 1.0f, sb = newHighScore_ ? 0.10f : 1.0f;
         drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
@@ -1388,7 +1393,7 @@ void Game::render(std::vector<DrawCmd>& out) {
              0.1f, 0.5f, 0.15f, 0.30f + 0.10f * pulse);
         int n = numDigits((int)score_);
         float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
-        float firstCx = -(n - 1) * fw * 0.5f;
+        float firstCx = -(float)(n - 1) * fw * 0.5f;
         float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
         drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
         if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
@@ -1432,6 +1437,6 @@ void Game::render(std::vector<DrawCmd>& out) {
     }
 }
 
-void Game::clearColor(float out[3]) const {
+void Game::clearColor(float out[3]) {
     out[0] = 0.03f; out[1] = 0.04f; out[2] = 0.09f;
 }
