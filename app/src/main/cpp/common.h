@@ -30,10 +30,10 @@ enum FillStyle {
 // One draw: a 2x2 linear transform + NDC translation + RGBA colour, applied to a shape.
 // Matches the push-constant layout consumed by shape.vert/.frag.
 struct DrawCmd {
-    float mtx[4];   // m00, m01, m10, m11
-    float tx, ty;   // NDC translation
-    float color[4]; // r, g, b, a
-    float style;    // FillStyle (as float — goes straight into the push constants)
-    float seed;     // per-draw noise seed for STYLE_ROCK
-    int shape;
+    float mtx[4] = {};       // m00, m01, m10, m11
+    float tx = 0.0f, ty = 0.0f;   // NDC translation
+    float color[4] = {};     // r, g, b, a
+    float style = 0.0f;      // FillStyle (as float — goes straight into the push constants)
+    float seed = 0.0f;       // per-draw noise seed for STYLE_ROCK
+    int shape = 0;
 };

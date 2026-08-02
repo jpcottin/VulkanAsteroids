@@ -22,7 +22,7 @@ public:
 
     void update(float dt);
     void render(std::vector<DrawCmd>& out);
-    void clearColor(float out[3]) const;
+    static void clearColor(float out[3]);
 
     // True on static screens (title / game over / win) where the main loop may
     // throttle the frame rate to save battery.
@@ -38,46 +38,46 @@ private:
     enum State { TITLE, PLAYING, LEVEL_CLEAR, GAME_OVER, WIN, SETTINGS };
 
     struct Asteroid {
-        float x, y, vx, vy, r, rot, spin;
-        float cr, cg, cb;
+        float x = 0.0f, y = 0.0f, vx = 0.0f, vy = 0.0f, r = 0.0f, rot = 0.0f, spin = 0.0f;
+        float cr = 0.0f, cg = 0.0f, cb = 0.0f;
         float seed   = 0.0f;            // per-rock noise seed for STYLE_ROCK
         float squash = 1.0f;            // visual x/y aspect (collision stays circular)
         int   shape  = SHAPE_ASTEROID;  // silhouette variant
-        int gen;          // 0=large (splits), 1=medium (splits), 2=small (no split)
-        int hp;           // hit points: 1 normal/fast, 2 armored
-        AsteroidType type;
-        bool alive;
+        int gen = 0;      // 0=large (splits), 1=medium (splits), 2=small (no split)
+        int hp = 1;       // hit points: 1 normal/fast, 2 armored
+        AsteroidType type = AT_NORMAL;
+        bool alive = false;
     };
-    struct Bullet { float x, y, vx, vy, life; bool alive; };
+    struct Bullet { float x = 0.0f, y = 0.0f, vx = 0.0f, vy = 0.0f, life = 0.0f; bool alive = false; };
     struct Particle {
-        float x, y, vx, vy;
-        float rot, spin;
-        float t, maxLife, size;
-        float r, g, b;
-        bool alive;
+        float x = 0.0f, y = 0.0f, vx = 0.0f, vy = 0.0f;
+        float rot = 0.0f, spin = 0.0f;
+        float t = 0.0f, maxLife = 0.0f, size = 0.0f;
+        float r = 0.0f, g = 0.0f, b = 0.0f;
+        bool alive = false;
     };
     struct Explosion {
-        float x, y, radius;
-        float t, maxLife;
-        float cr, cg, cb;
-        bool alive;
+        float x = 0.0f, y = 0.0f, radius = 0.0f;
+        float t = 0.0f, maxLife = 0.0f;
+        float cr = 0.0f, cg = 0.0f, cb = 0.0f;
+        bool alive = false;
     };
-    struct Star { float x, y, size; };
-    struct Pointer { bool active; float x, y; };
+    struct Star { float x = 0.0f, y = 0.0f, size = 0.0f; };
+    struct Pointer { bool active = false; float x = 0.0f, y = 0.0f; };
     struct HighScore { long score = 0; int level = 0; };
 
     enum PowerUpType { PU_SHIELD = 0, PU_SPREAD = 1, PU_SPEED = 2 };
     struct PowerUp {
-        float x, y, vy, rot, spin;
-        PowerUpType type;
-        bool alive;
+        float x = 0.0f, y = 0.0f, vy = 0.0f, rot = 0.0f, spin = 0.0f;
+        PowerUpType type = PU_SHIELD;
+        bool alive = false;
     };
 
     // Level-10 boss: large multi-HP asteroid with sinusoidal drift.
     struct Boss {
-        float x, y, vy, t, rot, spin, r;
-        int   hp, maxHp;
-        bool  alive;
+        float x = 0.0f, y = 0.0f, vy = 0.0f, t = 0.0f, rot = 0.0f, spin = 0.0f, r = 0.0f;
+        int   hp = 0, maxHp = 0;
+        bool  alive = false;
     };
 
     static const int kMaxScores = 5;
@@ -114,26 +114,26 @@ private:
     // style/seed select the fragment-shader fill (STYLE_FLAT default, STYLE_ROCK + seed).
     void emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
               float sx, float sy, float rot, float r, float g, float b, float a,
-              float style = (float)STYLE_FLAT, float seed = 0.0f);
+              float style = (float)STYLE_FLAT, float seed = 0.0f) const;
     void drawDigit(std::vector<DrawCmd>& out, int d, float cx, float cy,
-                   float h, float r, float g, float b, float a);
+                   float h, float r, float g, float b, float a) const;
     void drawNumber(std::vector<DrawCmd>& out, int value, float leftX, float cy,
-                    float h, float r, float g, float b, float a);
+                    float h, float r, float g, float b, float a) const;
     void drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
-                    float h, float r, float g, float b, float a);
+                    float h, float r, float g, float b, float a) const;
     void drawText(std::vector<DrawCmd>& out, const char* text, float cx, float cy,
-                  float h, float r, float g, float b, float a);
-    void drawPowerUpHUD(std::vector<DrawCmd>& out);
-    void drawComboIndicator(std::vector<DrawCmd>& out);
-    void drawBossHealthBar(std::vector<DrawCmd>& out);
+                  float h, float r, float g, float b, float a) const;
+    void drawPowerUpHUD(std::vector<DrawCmd>& out) const;
+    void drawComboIndicator(std::vector<DrawCmd>& out) const;
+    void drawBossHealthBar(std::vector<DrawCmd>& out) const;
     void drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
-                      float r, float g, float b, float a);
-    void drawSettingsScreen(std::vector<DrawCmd>& out);
+                      float r, float g, float b, float a) const;
+    void drawSettingsScreen(std::vector<DrawCmd>& out) const;
     void loadSettings();
     void saveSettings();
     void updateAutoRun(float dt);
     bool isGearTap(float px, float py) const;
-    int numDigits(int v) const;
+    static int numDigits(int v);
 
     // --- audio ---
     AudioEngine* audio_ = nullptr;
