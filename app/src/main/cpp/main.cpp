@@ -59,7 +59,17 @@ struct Engine {
     Game         game;
     AudioEngine  audio;
     bool instanceReady = false;
+    // The game only simulates while the activity is resumed AND has window
+    // focus: a paused activity or one covered by the notification shade / a
+    // system dialog keeps its surface, so "surface exists" is not enough.
+    bool resumed = false;
+    bool focused = false;
+    // Present one more frame after going inactive so the pause overlay the
+    // game switched to is what stays on screen, not the last live frame.
+    bool frameOnPause = false;
     double lastTime = 0.0;
+
+    bool active() const { return resumed && focused; }
 };
 
 static double now_s() {
@@ -68,12 +78,28 @@ static double now_s() {
     return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
 }
 
+// Called whenever resumed/focused changes: freezes or resumes the simulation
+// and the audio stream together.
+static void updateActivity(Engine* e, bool wasActive) {
+    bool isActive = e->active();
+    if (wasActive && !isActive) {
+        e->game.onAppPause();
+        e->audio.pause();
+        e->frameOnPause = true;
+    } else if (!wasActive && isActive) {
+        e->audio.resume();
+        e->lastTime = now_s();   // don't feed the time spent paused into dt
+    }
+}
+
 static void handle_cmd(android_app* app, int32_t cmd) {
     auto* e = (Engine*)app->userData;
+    bool wasActive = e->active();
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
             if (app->window && e->instanceReady) {
                 e->renderer.initWindow(app->window);
+                if (!e->active()) e->audio.pause();   // open silent, start on focus
                 e->audio.init();
                 e->game.setAudioEngine(&e->audio);
                 e->lastTime = now_s();
@@ -84,9 +110,14 @@ static void handle_cmd(android_app* app, int32_t cmd) {
             e->audio.shutdown();
             e->renderer.termWindow();
             break;
+        case APP_CMD_RESUME:       e->resumed = true;  break;
+        case APP_CMD_PAUSE:        e->resumed = false; break;
+        case APP_CMD_GAINED_FOCUS: e->focused = true;  break;
+        case APP_CMD_LOST_FOCUS:   e->focused = false; break;
         default:
             break;
     }
+    updateActivity(e, wasActive);
 }
 
 static int32_t handle_input(android_app* app, AInputEvent* ev) {
@@ -140,10 +171,18 @@ void android_main(android_app* app) {
     engine.game.setHapticCallback([app]() { triggerHaptic(app); });
     engine.lastTime = now_s();
 
+    std::vector<DrawCmd> cmds;   // reused across frames: no per-frame allocation
     while (true) {
         int events;
         android_poll_source* source;
-        int timeout = engine.renderer.ready() ? 0 : -1;
+        // Block on the looper while there is nothing to draw or the activity
+        // is paused / unfocused; otherwise drain events and render a frame.
+        // A renderer that lost its swapchain (or device) while the window is
+        // still up is retried on a timer rather than waiting for a window
+        // event that may never come (split-screen resizes send none).
+        bool running   = engine.renderer.ready() && (engine.active() || engine.frameOnPause);
+        bool recovering = engine.active() && engine.renderer.needsRecovery();
+        int timeout = running ? 0 : (recovering ? 250 : -1);
         while (ALooper_pollOnce(timeout, nullptr, &events, (void**)&source) >= 0) {
             if (source) source->process(app, source);
             if (app->destroyRequested) {
@@ -153,19 +192,20 @@ void android_main(android_app* app) {
             timeout = 0;  // drain remaining events without blocking
         }
 
-        if (engine.renderer.ready()) {
+        if (recovering && !engine.renderer.ready()) engine.renderer.tryRecover();
+
+        if (engine.renderer.ready() && (engine.active() || engine.frameOnPause)) {
             double now = now_s();
             float dt = (float)(now - engine.lastTime);
             engine.lastTime = now;
 
             engine.game.setViewport(engine.renderer.width(), engine.renderer.height());
-            engine.game.update(dt);
+            if (engine.active()) engine.game.update(dt);
+            engine.frameOnPause = false;
 
-            std::vector<DrawCmd> cmds;
+            cmds.clear();
             engine.game.render(cmds);
-            float clear[3];
-            engine.game.clearColor(clear);
-            engine.renderer.drawFrame(cmds, clear);
+            engine.renderer.drawFrame(cmds, kClearColor);
 
             static float fpsAccum  = 0.0f;
             static int   fpsFrames = 0;

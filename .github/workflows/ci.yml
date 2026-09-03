@@ -12,6 +12,7 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -25,6 +26,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 
@@ -41,6 +43,7 @@ jobs:
   test:
     name: Native Tests (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +65,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 
@@ -87,6 +91,7 @@ jobs:
   smoke:
     name: Smoke Test (API ${{ matrix.api-level }}${{ matrix.suffix && format(' {0}', matrix.suffix) || '' }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # API 37.0 ps16k legs are preview images; run them non-blocking so a flaky
     # or unavailable preview emulator never gates a PR.
     continue-on-error: ${{ matrix.experimental || false }}
@@ -163,6 +168,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 
@@ -202,9 +208,13 @@ jobs:
           emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -show-kernel -debug-metrics -metrics-collection ${{ matrix.extra-options || '' }}
           disable-animations: true
           emulator-boot-timeout: 900
+          # Launch + screenshot + logcat come first: the instrumented test now
+          # fails on a black frame (no Vulkan device on the 37.x ps16k images),
+          # and the runner stops the script at the first failing line, which
+          # must not cost us the launch-only artifacts those legs exist for.
           script: |
             adb wait-for-device
-            ./gradlew connectedAndroidTest --no-daemon
+            ./gradlew assembleDebug --no-daemon
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
@@ -213,6 +223,7 @@ jobs:
             sleep 4
             adb exec-out screencap -p > screenshot.png || true
             adb logcat -d Asteroids:V AndroidRuntime:E *:S > logcat.txt || true
+            ./gradlew connectedAndroidTest --no-daemon
 
       - name: Upload test results
         if: always()
@@ -259,6 +270,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 

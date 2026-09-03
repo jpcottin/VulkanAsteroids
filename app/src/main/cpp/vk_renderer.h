@@ -17,6 +17,11 @@ public:
     void cleanup();
 
     bool ready() const { return swapchainReady_; }
+    // A window exists but nothing can be drawn (a failed swapchain rebuild, a
+    // lost device): the main loop should keep calling tryRecover() instead of
+    // blocking until the next window event.
+    bool needsRecovery() const { return window_ != nullptr && !swapchainReady_; }
+    void tryRecover();
     int width() const { return (int)extent_.width; }
     int height() const { return (int)extent_.height; }
 
@@ -24,8 +29,23 @@ public:
 
 private:
     bool ensureDevice();
+    // Everything that hangs off device_ (incl. the surface-independent
+    // pipeline and sync objects). Used by cleanup() and to rebuild after a
+    // device loss or a submit failure that left a fence unsignalled.
+    void destroyDevice();
+    bool createSurface();
+    void destroySurface();
+    // Device + swapchain + pipeline for window_ / surface_. Sets swapchainReady_.
+    bool setupForWindow();
     bool createSwapchain();
     void destroySwapchain();
+    // Drop and rebuild the swapchain (and the surface too on SURFACE_LOST).
+    // Clears swapchainReady_ on failure so drawFrame never touches a null
+    // swapchain; tryRecover() / INIT_WINDOW get to try again.
+    void recreateSwapchain(bool surfaceToo);
+    // Unrecoverable-in-frame error: stop drawing and have the next recovery
+    // rebuild the device-level state.
+    void stopRendering(const char* what, VkResult r);
     bool createRenderPass();
     bool createPipeline();
     bool createVertexBuffer();
@@ -63,10 +83,13 @@ private:
     static const int kFramesInFlight = 2;
     VkCommandBuffer cmdBufs_[kFramesInFlight] = {VK_NULL_HANDLE};
     VkSemaphore imageAvailable_[kFramesInFlight] = {VK_NULL_HANDLE};
-    VkSemaphore renderFinished_[kFramesInFlight] = {VK_NULL_HANDLE};
+    // One per swapchain image, not per frame in flight: the present that
+    // waits on it may still be pending when the same frame slot comes round.
+    std::vector<VkSemaphore> renderFinished_;
     VkFence inFlight_[kFramesInFlight] = {VK_NULL_HANDLE};
     uint32_t frame_ = 0;
 
     bool deviceReady_ = false;
+    bool deviceBroken_ = false;   // rebuild device state before drawing again
     bool swapchainReady_ = false;
 };

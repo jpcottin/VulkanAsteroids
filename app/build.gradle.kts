@@ -8,15 +8,18 @@ tasks.register("runNativeTests") {
     dependsOn("externalNativeBuildDebug")
     // ABI defaults to arm64-v8a (local device); override with -PtestAbi=x86_64 for CI.
     val abi = (project.findProperty("testAbi") as String?) ?: "arm64-v8a"
-    val binPath = layout.buildDirectory
-        .file("intermediates/cmake/debug/obj/$abi/game_tests")
-        .get().asFile.absolutePath
+    val intermediates = layout.buildDirectory.dir("intermediates").get().asFile
     doLast {
-        val binFile = File(binPath)
-        if (!binFile.exists()) {
-            throw GradleException("Native test binary not found at $binPath. " +
+        // AGP writes the binary under intermediates/cxx/<variant>/<hash>/obj/<abi>/
+        // (the hash changes with the native config) and may leave a stale copy
+        // in the legacy intermediates/cmake/debug/obj/ tree: take the newest.
+        val binFile = intermediates.walkTopDown()
+            .filter { it.isFile && it.name == "game_tests" && it.parentFile.name == abi }
+            .maxByOrNull { it.lastModified() }
+            ?: throw GradleException("Native test binary for ABI $abi not found under $intermediates. " +
                     "Ensure externalNativeBuildDebug has run for ABI $abi.")
-        }
+        val binPath = binFile.absolutePath
+        println("Using native test binary: $binPath")
         fun adb(vararg args: String) {
             println("Executing: adb ${args.joinToString(" ")}")
             val rc = ProcessBuilder("adb", *args).inheritIO().start().waitFor()
@@ -66,8 +69,9 @@ android {
 
     buildTypes {
         release {
+            // No Java/Kotlin app code to shrink (NativeActivity + a .so), so
+            // there is nothing for R8 to do and no keep rules to maintain.
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     compileOptions {

@@ -4,12 +4,14 @@
 #include <atomic>
 #include <array>
 #include <cmath>
+#include <mutex>
 
 // ── Impl ──────────────────────────────────────────────────────────────────────
 
-struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
+struct AudioEngine::Impl : public oboe::AudioStreamDataCallback,
+                           public oboe::AudioStreamErrorCallback,
+                           public std::enable_shared_from_this<AudioEngine::Impl> {
 
-    static constexpr int   kSR     = 44100;
     static constexpr int   kVoices = 8;
     static constexpr float kTau    = 6.28318530f;
 
@@ -22,8 +24,19 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
         bool  active = false;
     };
 
+    // `stream` is touched by the game thread (open/close/pause/resume) and by
+    // Oboe's error thread (onErrorAfterClose); `streamMutex` guards it. Oboe
+    // calls are made outside the lock where a callback could re-enter.
+    std::mutex                         streamMutex;
     std::shared_ptr<oboe::AudioStream> stream;
+    bool                               closing = false;
+    bool                               paused  = false;
     std::array<Voice, kVoices>         voices{};
+
+    // The stream opens at the device's native rate (no resampler in the
+    // path); the synth steps every oscillator by this. Set before the stream
+    // starts, read only by the audio thread afterwards.
+    float sampleDt = 1.0f / 48000.0f;
 
     // Bits: 0=LASER 1=EXPLOSION 2=HIT 3=CLEAR 4=POWERUP – game thread writes.
     std::atomic<uint32_t> pending{0};
@@ -40,7 +53,10 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
     static constexpr float kPadFreqs[3] = {110.0f, 130.8f, 164.8f}; // A2 C3 E3
     static constexpr float kArpFreqs[4] = {220.0f, 261.6f, 329.6f, 440.0f}; // A3 C4 E4 A4
 
-    float musicTime_   = 0.0f;
+    // Wrapping phases instead of an ever-growing time accumulator: a float
+    // that keeps counting seconds loses the 1/44100 step after ~8 minutes.
+    float tremPhase_   = 0.0f;   // [0,1) at 0.28 Hz
+    float barPhase_    = 0.0f;   // [0,4) beats
     float padPhase_[3] = {};
     float bassPhase_   = 0.0f;
     float bassEnv_     = 0.0f;
@@ -65,7 +81,7 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
     }
 
     float genVoice(Voice& v) {
-        const float dt = 1.0f / kSR;
+        const float dt = sampleDt;
         float s = 0.0f;
 
         switch (v.type) {
@@ -82,10 +98,11 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
             case ST::EXPLOSION: {
                 constexpr float dur = 0.50f;
                 if (v.t > dur) { v.active = false; break; }
-                float crack  = white() * expf(-v.t / 0.010f) * 0.65f;
+                // Gains sum to ~0.9 so a single explosion never hits the clipper.
+                float crack  = white() * expf(-v.t / 0.010f) * 0.32f;
                 v.phase      = v.phase * 0.48f + white() * 0.52f;
-                float rumble = v.phase * expf(-v.t / 0.09f) * 0.75f;
-                float boom   = sinf(v.t * kTau * 55.0f) * expf(-v.t / 0.045f) * 0.45f;
+                float rumble = v.phase * expf(-v.t / 0.09f) * 0.36f;
+                float boom   = sinf(v.t * kTau * 55.0f) * expf(-v.t / 0.045f) * 0.22f;
                 s = crack + rumble + boom;
                 break;
             }
@@ -132,12 +149,13 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
     }
 
     float genMusic() {
-        const float dt = 1.0f / kSR;
-        musicTime_ += dt;
+        const float dt = sampleDt;
         float s = 0.0f;
 
         // Slow tremolo LFO at 0.28 Hz
-        float tremolo = 0.72f + 0.28f * sinf(musicTime_ * kTau * 0.28f);
+        tremPhase_ += dt * 0.28f;
+        if (tremPhase_ >= 1.0f) tremPhase_ -= 1.0f;
+        float tremolo = 0.72f + 0.28f * sinf(tremPhase_ * kTau);
 
         // Pad chord: A2 + C3 + E3 sustained
         for (int i = 0; i < 3; i++) {
@@ -147,8 +165,9 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
         }
 
         // Bass: A1 (55 Hz) triggered on beats 1 and 3 of a 4-beat bar
-        float barPhase = fmodf(musicTime_ * kTempo, 4.0f);
-        int   beat     = (int)barPhase;
+        barPhase_ += dt * kTempo;
+        if (barPhase_ >= 4.0f) barPhase_ -= 4.0f;
+        int   beat     = (int)barPhase_;
         if (beat != lastBeat_) {
             lastBeat_ = beat;
             if (beat == 0 || beat == 2) bassEnv_ = 1.0f;
@@ -205,49 +224,118 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
 
             if (music) s += genMusic();
 
-            out[i] = s >  1.0f ?  1.0f :
-                     s < -1.0f ? -1.0f : s;
+            // Soft clip: stacked explosions + thrust compress instead of
+            // turning into a square wave.
+            out[i] = tanhf(s);
         }
         return oboe::DataCallbackResult::Continue;
     }
 
+    // Oboe has already stopped and closed the stream (route change, endpoint
+    // taken by another app, ...): open a fresh one so audio comes back. Runs
+    // on Oboe's error thread; the open itself happens outside the lock so
+    // lifecycle calls on the game thread never wait on audioserver.
+    void onErrorAfterClose(oboe::AudioStream* errored, oboe::Result r) override {
+        LOGW("Oboe stream error: %s — reopening", oboe::convertToText(r));
+        {
+            std::lock_guard<std::mutex> lock(streamMutex);
+            if (closing || stream.get() != errored) return;
+            stream.reset();
+        }
+        std::shared_ptr<oboe::AudioStream> fresh = openStream();
+        if (!fresh) return;
+        bool install, startIt = false;
+        {
+            std::lock_guard<std::mutex> lock(streamMutex);
+            install = !closing && !stream;   // shutdown() may have raced us
+            if (install) { stream = fresh; startIt = !paused; }
+        }
+        if (!install) { fresh->close(); return; }
+        if (startIt) start(fresh);
+    }
+
     // ── stream lifecycle ──────────────────────────────────────────────────────
 
-    bool open() {
+    // Open (but don't start) an output stream at the device's native rate.
+    // No lock held: this talks to audioserver.
+    std::shared_ptr<oboe::AudioStream> openStream() {
+        std::shared_ptr<oboe::AudioStream> s;
         oboe::AudioStreamBuilder builder;
         builder.setDirection(oboe::Direction::Output)
                ->setFormat(oboe::AudioFormat::Float)
                ->setChannelCount(oboe::ChannelCount::Mono)
-               ->setSampleRate(kSR)
                ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-               ->setSharingMode(oboe::SharingMode::Exclusive)
-               ->setDataCallback(this);
+               ->setSharingMode(oboe::SharingMode::Shared)
+               ->setDataCallback(shared_from_this())
+               ->setErrorCallback(shared_from_this());
 
-        oboe::Result r = builder.openStream(stream);
+        oboe::Result r = builder.openStream(s);
         if (r != oboe::Result::OK) {
             LOGW("Oboe openStream: %s", oboe::convertToText(r));
-            return false;
+            return nullptr;
         }
-        stream->requestStart();
+        sampleDt = 1.0f / (float)s->getSampleRate();
+        LOGI("Oboe stream: %d Hz, %s, %s", s->getSampleRate(),
+             oboe::convertToText(s->getSharingMode()),
+             oboe::convertToText(s->getPerformanceMode()));
+        return s;
+    }
+
+    static void start(const std::shared_ptr<oboe::AudioStream>& s) {
+        oboe::Result r = s->requestStart();
+        if (r != oboe::Result::OK) LOGW("Oboe requestStart: %s", oboe::convertToText(r));
+    }
+
+    bool open() {
+        std::shared_ptr<oboe::AudioStream> s = openStream();
+        if (!s) return false;
+        bool startIt;
+        {
+            std::lock_guard<std::mutex> lock(streamMutex);
+            closing = false;
+            stream = s;
+            startIt = !paused;
+        }
+        if (startIt) start(s);
         return true;
     }
 
     void close() {
-        if (stream) {
-            stream->requestStop();
-            stream->close();
-            stream.reset();
+        std::shared_ptr<oboe::AudioStream> s;
+        {
+            std::lock_guard<std::mutex> lock(streamMutex);
+            closing = true;
+            s = std::move(stream);
         }
+        if (s) {
+            s->requestStop();
+            s->close();
+        }
+    }
+
+    void setPaused(bool p) {
+        std::shared_ptr<oboe::AudioStream> s;
+        {
+            std::lock_guard<std::mutex> lock(streamMutex);
+            paused = p;
+            s = stream;
+        }
+        if (!s) return;
+        oboe::Result r = p ? s->requestPause() : s->requestStart();
+        if (r != oboe::Result::OK)
+            LOGW("Oboe %s: %s", p ? "requestPause" : "requestStart", oboe::convertToText(r));
     }
 };
 
 // ── AudioEngine public API ────────────────────────────────────────────────────
 
-AudioEngine::AudioEngine()  : impl_(new Impl) {}
-AudioEngine::~AudioEngine() { shutdown(); delete impl_; }
+AudioEngine::AudioEngine()  : impl_(std::make_shared<Impl>()) {}
+AudioEngine::~AudioEngine() { shutdown(); }
 
 bool AudioEngine::init()     { return impl_->open(); }
 void AudioEngine::shutdown() { impl_->close(); }
+void AudioEngine::pause()    { impl_->setPaused(true); }
+void AudioEngine::resume()   { impl_->setPaused(false); }
 
 void AudioEngine::triggerLaser()     { impl_->pending.fetch_or( 1u, std::memory_order_relaxed); }
 void AudioEngine::triggerExplosion() { impl_->pending.fetch_or( 2u, std::memory_order_relaxed); }

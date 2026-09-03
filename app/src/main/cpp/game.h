@@ -22,7 +22,11 @@ public:
 
     void update(float dt);
     void render(std::vector<DrawCmd>& out);
-    static void clearColor(float out[3]);
+
+    // The activity lost focus or was paused mid-game: drop held pointers and
+    // park an active game on the settings overlay so nothing moves until the
+    // player taps BACK.
+    void onAppPause();
 
     // True on static screens (title / game over / win) where the main loop may
     // throttle the frame rate to save battery.
@@ -105,6 +109,11 @@ private:
     bool rightHeld() const;
     bool thrustHeld() const;
     bool fireHeld() const;
+    bool inThrustZone(const Pointer& p) const;
+    bool inFireZone(const Pointer& p) const;
+    // Touch-screen pixel -> world coordinates.
+    void toWorld(float px, float py, float& wx, float& wy) const;
+    void clampShipX();
     void loadHighScores();
     void saveHighScores();
     void checkHighScore();
@@ -117,7 +126,7 @@ private:
               float style = (float)STYLE_FLAT, float seed = 0.0f) const;
     void drawDigit(std::vector<DrawCmd>& out, int d, float cx, float cy,
                    float h, float r, float g, float b, float a) const;
-    void drawNumber(std::vector<DrawCmd>& out, int value, float leftX, float cy,
+    void drawNumber(std::vector<DrawCmd>& out, long value, float leftX, float cy,
                     float h, float r, float g, float b, float a) const;
     void drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
                     float h, float r, float g, float b, float a) const;
@@ -133,7 +142,7 @@ private:
     void saveSettings();
     void updateAutoRun(float dt);
     bool isGearTap(float px, float py) const;
-    static int numDigits(int v);
+    static int numDigits(long v);
 
     // --- audio ---
     AudioEngine* audio_ = nullptr;
@@ -199,11 +208,16 @@ public:
     void setScoreForTest(long s)         { score_ = s; }
     void clearInvulnForTest()            { invuln_ = 0.0f; }
     bool isGameOverForTest()       const { return state_ == GAME_OVER; }
+    bool isWinForTest()            const { return state_ == WIN; }
+    void startLevelForTest(int level)    { startGame(); startLevel(level); }
+    // Total asteroid slots held, dead ones included (leak regression test).
+    int  asteroidStorageForTest()  const { return (int)asteroids_.size(); }
+    long topHighScoreForTest()     const { return highScores_[0].score; }
 #endif
 
 private:
     // --- viewport ---
-    int vw_ = 1, vh_ = 1;
+    float vwf_ = 1.0f, vhf_ = 1.0f;   // viewport in pixels, floats for the hit-testing math
     float asp_ = 0.5f;
 
     // --- input ---
