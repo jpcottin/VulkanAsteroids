@@ -56,11 +56,18 @@ TEST(ShipPhysics, GravityPullsShipDown) {
     EXPECT_GT(g.shipY(), y0);
 }
 
+// update() clamps dt to 50 ms per call, so a long interval has to be fed as
+// many small steps: 5 s of free fall from y=0.80 under 0.9 gravity would
+// otherwise be one 50 ms step that never reaches the clamp.
+static void runFor(Game& g, float seconds) {
+    for (float t = 0.0f; t < seconds; t += 0.016f) g.update(0.016f);
+}
+
 TEST(ShipPhysics, ShipClampsAtBottom) {
     Game g;
     startPlaying(g);
-    g.update(5.0f);  // long free-fall
-    EXPECT_LE(g.shipY(), 0.92f);
+    runFor(g, 5.0f);  // long free-fall: well past the 0.92 floor without a clamp
+    EXPECT_NEAR(g.shipY(), 0.92f, 1e-4f);
 }
 
 TEST(ShipPhysics, ThrustMovesShipUp) {
@@ -78,9 +85,9 @@ TEST(ShipPhysics, ShipClampsAtTop) {
     Game g;
     startPlaying(g);
     g.onPointerDown(0, kThrustX, kThrustY);
-    g.update(5.0f);  // thrust for a long time
+    runFor(g, 5.0f);  // thrust for a long time
     g.onPointerUp(0);
-    EXPECT_GE(g.shipY(), 0.12f);
+    EXPECT_NEAR(g.shipY(), 0.12f, 1e-4f);
 }
 
 // ── Input zone isolation ───────────────────────────────────────────────────────
@@ -286,14 +293,16 @@ TEST(Combo, FirstKillSetsComboToOne) {
 TEST(Combo, KillsInWindowIncrementCombo) {
     Game g;
     startPlaying(g);
-    // Two asteroids at same x, staggered slightly in y so the same bullet lane hits both.
-    g.spawnTestAsteroid(0.0f, 0.45f, 0.06f, 2);
-    g.spawnTestAsteroid(0.0f, 0.60f, 0.06f, 2);
-    g.onPointerDown(0, kFireX, kFireY);
-    for (int i = 0; i < 10; i++) g.update(0.016f);
-    g.onPointerUp(0);
-    EXPECT_GE(g.combo(), 1);  // at least one kill registered
-    EXPECT_LE(g.combo(), 4);  // never exceeds cap
+    // One asteroid per shot, each fired after the 0.22 s cooldown but inside
+    // the 1.8 s combo window: the counter must climb 1, 2, 3, 4 and then cap.
+    for (int kill = 1; kill <= 5; kill++) {
+        g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);
+        g.onPointerDown(0, kFireX, kFireY);
+        for (int i = 0; i < 5; i++) g.update(0.016f);   // fire + travel
+        g.onPointerUp(0);
+        EXPECT_EQ(g.combo(), kill < 4 ? kill : 4) << "after kill " << kill;
+        for (int i = 0; i < 16; i++) g.update(0.016f);  // cooldown (< combo window)
+    }
 }
 
 TEST(Combo, ComboScoreHigherThanBaseScore) {
@@ -348,24 +357,70 @@ TEST(ArmoredAsteroid, TakesTwoHitsToDestroy) {
 
 // ── Boss ──────────────────────────────────────────────────────────────────────
 
-TEST(Boss, SpawnsAtLevel10) {
+TEST(Boss, SpawnsAtLevel10Only) {
     Game g;
-    startPlaying(g);
+    g.setViewport(kW, kH);
+    g.startLevelForTest(9);
     EXPECT_FALSE(g.bossAliveForTest());
-
-    // Start level 10 directly via new-game restart trick
-    // We can't call startLevel directly; use triggerNewGameForTest which goes to level 1.
-    // Instead, verify the boss state is properly inactive at level 1.
-    EXPECT_FALSE(g.bossAliveForTest());
+    g.startLevelForTest(10);
+    EXPECT_TRUE(g.bossAliveForTest());
 }
 
 TEST(Boss, HasCorrectInitialHP) {
-    // Boss should start with maxHp = 12 per spawnBoss() implementation.
-    // We can't reach level 10 easily in a unit test but can verify the struct default.
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    EXPECT_EQ(g.bossHpForTest(), 12);
+}
+
+TEST(Boss, DefeatingBossWinsTheGame) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    ASSERT_TRUE(g.bossAliveForTest());
+    // The boss enters from the top and drifts sideways; the auto-run AI
+    // tracks and shoots it. 12 hits at a 0.22 s cooldown is under 3 s, so
+    // 60 s is generous even with evasive manoeuvres.
+    g.setAutoRunForTest(true);
+    g.setScoreForTest(500);
+    for (int i = 0; i < 60 * 60 && !g.isWinForTest(); i++) g.update(0.016f);
+    EXPECT_TRUE(g.isWinForTest());
+    EXPECT_FALSE(g.bossAliveForTest());
+    // Whatever the winning volley did after the last boss hit must not have
+    // scored: the table was written on the WIN transition.
+    EXPECT_EQ(g.topHighScoreForTest(), g.score());
+}
+
+// ── Title screen ──────────────────────────────────────────────────────────────
+
+TEST(TitleScreen, DoesNotAccumulateDeadAsteroids) {
+    // Ambient asteroids scroll off the bottom on the title screen; they must be
+    // erased, not just flagged, or the idle screen grows without bound.
+    Game g;
+    g.setViewport(kW, kH);
+    runFor(g, 60.0f);  // one idle minute
+    EXPECT_EQ(g.asteroidStorageForTest(), g.asteroidCount());
+    EXPECT_LT(g.asteroidStorageForTest(), 12);   // ~2.5 s to cross, one every 0.8 s
+}
+
+// ── Game over ─────────────────────────────────────────────────────────────────
+
+TEST(GameOver, HighScoreMatchesFinalScore) {
+    // The fatal hit must be the last thing that scores this frame: a dodge or
+    // kill processed afterwards would show on screen but not in the table.
     Game g;
     startPlaying(g);
-    // Boss not yet spawned at level 1
-    EXPECT_EQ(g.bossHpForTest(), 0);
+    g.setScoreForTest(500);
+    // An asteroid about to leave the bottom edge (dodge points) and one on the
+    // ship, plus a bullet lane target; lives burn down one per frame.
+    for (int hit = 0; hit < 5; hit++) {
+        g.clearInvulnForTest();
+        g.spawnTestAsteroid(g.shipX(), g.shipY(), 0.06f, 2);        // fatal contact
+        g.spawnTestAsteroid(0.3f, 1.08f, 0.02f, 2);                  // exits this frame
+        g.update(0.016f);
+    }
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(g.topHighScoreForTest(), g.score());
 }
 
 // ── Power-up session isolation ─────────────────────────────────────────────────

@@ -259,10 +259,12 @@ boot_and_play() {
     else kill "$EMU_PID" 2>/dev/null || true; fi
     sleep 10
   fi
+  # Forget the process group only once it is really gone: the end-of-script
+  # guard relies on EMU_PGID to keep a still-running emulator's AVD alive.
   if [ -n "$EMU_PGID" ]; then
     for _ in $(seq 1 120); do kill -0 -- "-$EMU_PGID" 2>/dev/null || break; sleep 1; done
+    kill -0 -- "-$EMU_PGID" 2>/dev/null || EMU_PGID=""
   fi
-  EMU_PGID=""
   echo "RUN $N: down $(( $(date +%s) - T_KILL ))s after the shutdown request (played ~$(( T_KILL - T_RESUME ))s)"
   LD_LIBRARY_PATH="$SDK/emulators/latest/lib64" \
     "$SDK/emulators/latest/bin/qemu-img" snapshot -l \

@@ -39,10 +39,11 @@ target_include_directories(native_app_glue PUBLIC
 
 # --- Oboe audio library (auto-selects AAudio on API 26+, OpenSL ES below) ---
 include(FetchContent)
+# Pinned to the commit behind tag 1.9.3 (a tag can be moved, a SHA cannot),
+# fetched as a 6 MB tarball with a content hash rather than a git clone.
 FetchContent_Declare(oboe
-    GIT_REPOSITORY https://github.com/google/oboe.git
-    GIT_TAG        1.9.3
-    GIT_SHALLOW    TRUE)
+    URL      https://github.com/google/oboe/archive/b15f5e39c01a7ada306d959e5129620b145fb8b4.tar.gz
+    URL_HASH SHA256=bc605cc0cee75126ab22443a4b4eb3d2b69d0bdc3caf07450659a11798fcb4a1)
 FetchContent_MakeAvailable(oboe)
 
 # --- The game library (loaded by NativeActivity as libasteroids.so) ---
@@ -54,6 +55,12 @@ add_library(asteroids SHARED
 
 add_dependencies(asteroids shaders)
 target_include_directories(asteroids PRIVATE "${GEN_DIR}")
+# -Wno-missing-field-initializers: the `VkFoo ci{VK_STRUCTURE_TYPE_...}` idiom
+# deliberately leaves the rest of every create-info struct zeroed.
+target_compile_options(asteroids PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+# Oboe's public headers carry their own unused-parameter warnings.
+target_include_directories(asteroids SYSTEM PRIVATE
+    $<TARGET_PROPERTY:oboe,INTERFACE_INCLUDE_DIRECTORIES>)
 
 # Keep ANativeActivity_onCreate (provided by glue) from being stripped.
 target_link_options(asteroids PRIVATE "-u" "ANativeActivity_onCreate")
@@ -81,4 +88,5 @@ add_executable(game_tests
 target_include_directories(game_tests PRIVATE
     "${GTEST_ROOT}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(game_tests PRIVATE -Wall -Wextra)
 target_link_libraries(game_tests gtest log)

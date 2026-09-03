@@ -7,6 +7,10 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+// Background clear colour, shared by the renderer's clear and by any shape
+// that has to "punch through" to the background (the gear icon's hub).
+constexpr float kClearColor[3] = {0.03f, 0.04f, 0.09f};
+
 // Drawable primitives the renderer knows how to draw.
 enum Shape {
     SHAPE_SHIP = 0,

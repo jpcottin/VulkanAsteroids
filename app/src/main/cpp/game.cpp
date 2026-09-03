@@ -6,7 +6,8 @@
 #include <cstring>
 
 // ---- level tuning (1..10, very easy -> hard) ----
-static int clampLevel(int L) { return L < 1 ? 1 : (L > 10 ? 10 : L); }
+static const int kMinLevel = 1, kMaxLevel = 10;
+static int clampLevel(int L) { return std::clamp(L, kMinLevel, kMaxLevel); }
 static float levelFall(int L)   { return 0.50f + 0.08f * (float)(clampLevel(L) - 1); }
 static float levelSpawn(int L)  { return 1.00f - 0.07f * (float)(clampLevel(L) - 1); }
 static int   levelGoal(int L)   {
@@ -24,6 +25,46 @@ static const float kBulletSpeed = 2.80f;
 static const float kFireCooldown = 0.22f;
 static const float kBulletLife  = 2.20f;
 
+// Per-frame decay factors are expressed as rates so they don't depend on the
+// refresh rate: factor^(60 fps) == exp(rate) per second.
+static const float kParticleDragRate = -7.67f;   // 0.88 per 60 Hz frame
+static const float kShakeDecayRate   = -14.9f;   // 0.78 per 60 Hz frame
+
+// Touch zones as fractions of the viewport. Bottom-left corner is THRUST,
+// bottom-right is FIRE; the rest of the left/right halves move the ship.
+// render() draws the zone quads from the same numbers.
+static const float kThrustZoneW = 0.30f;   // x < 30% of width
+static const float kFireZoneX   = 0.70f;   // x > 70% of width
+static const float kZoneTopY    = 0.72f;   // y > 72% of height
+
+// Remove entries whose `alive` flag has been cleared.
+template <class V>
+static void eraseDead(V& v) {
+    v.erase(std::remove_if(v.begin(), v.end(),
+                           [](const typename V::value_type& e) { return !e.alive; }),
+            v.end());
+}
+
+// Write `buf` to `path` atomically: a crash between truncate and write can't
+// leave a half-written file behind.
+static void writeFileAtomic(const char* path, const void* buf, size_t len) {
+    char tmp[600];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE* f = fopen(tmp, "wb");
+    if (!f) return;
+    bool ok = fwrite(buf, len, 1, f) == 1;
+    ok = (fclose(f) == 0) && ok;
+    if (!ok || rename(tmp, path) != 0) remove(tmp);
+}
+
+// Zero the screen-shake offset for the lifetime of the guard so HUD and
+// overlay elements are drawn shake-free, then restore it.
+struct ShakeOff {
+    float &x, &y, sx, sy;
+    ShakeOff(float& x_, float& y_) : x(x_), y(y_), sx(x_), sy(y_) { x = 0.0f; y = 0.0f; }
+    ~ShakeOff() { x = sx; y = sy; }
+};
+
 // 7-segment masks for digits 0..9 (bit a=1,b=2,c=4,d=8,e=16,f=32,g=64).
 static const int kDigitSeg[10] = {63, 6, 91, 79, 102, 109, 125, 7, 127, 111};
 
@@ -40,8 +81,8 @@ float Game::frange(float a, float b) { return a + (b - a) * frand(); }
 
 void Game::setViewport(int w, int h) {
     if (w <= 0 || h <= 0) return;
-    vw_ = w; vh_ = h;
-    asp_ = (float)w / (float)h;
+    vwf_ = (float)w; vhf_ = (float)h;
+    asp_ = vwf_ / vhf_;
     if (stars_.empty()) {
         for (int i = 0; i < 60; i++) {
             Star s;
@@ -58,44 +99,51 @@ void Game::setViewport(int w, int h) {
             starsNear_.push_back(s);
         }
     }
+    clampShipX();
+}
+
+void Game::clampShipX() {
     float lim = asp_ - shipScale_;
-    if (shipX_ > lim) shipX_ = lim;
-    if (shipX_ < -lim) shipX_ = -lim;
+    shipX_ = std::clamp(shipX_, -lim, lim);
+}
+
+void Game::toWorld(float px, float py, float& wx, float& wy) const {
+    wy = 2.0f * py / vhf_ - 1.0f;
+    wx = (2.0f * px / vwf_ - 1.0f) * asp_;
 }
 
 // --- input zone helpers ---
-// Bottom-left corner (x < 30%, y > 72%): THRUST
-// Bottom-right corner (x > 70%, y > 72%): FIRE
-// Left half excluding thrust zone: move left
-// Right half excluding fire zone: move right
+
+bool Game::inThrustZone(const Pointer& p) const {
+    return p.x < vwf_ * kThrustZoneW && p.y > vhf_ * kZoneTopY;
+}
+bool Game::inFireZone(const Pointer& p) const {
+    return p.x > vwf_ * kFireZoneX && p.y > vhf_ * kZoneTopY;
+}
 
 bool Game::leftHeld() const {
     if (autoRunActive_ && aiLeft_) return true;
     return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
-        if (!p.active || p.x >= (float)vw_ * 0.5f) return false;
-        if (p.x < (float)vw_ * 0.30f && p.y > (float)vh_ * 0.72f) return false;
-        return true;
+        return p.active && p.x < vwf_ * 0.5f && !inThrustZone(p);
     });
 }
 bool Game::rightHeld() const {
     if (autoRunActive_ && aiRight_) return true;
     return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
-        if (!p.active || p.x < (float)vw_ * 0.5f) return false;
-        if (p.x > (float)vw_ * 0.70f && p.y > (float)vh_ * 0.72f) return false;
-        if (isGearTap(p.x, p.y)) return false;  // gear area excluded from movement
-        return true;
+        return p.active && p.x >= vwf_ * 0.5f && !inFireZone(p) &&
+               !isGearTap(p.x, p.y);  // gear area excluded from movement
     });
 }
 bool Game::thrustHeld() const {
     if (autoRunActive_ && aiThrust_) return true;
     return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
-        return p.active && p.x < (float)vw_ * 0.30f && p.y > (float)vh_ * 0.72f;
+        return p.active && inThrustZone(p);
     });
 }
 bool Game::fireHeld() const {
     if (autoRunActive_ && aiFire_) return true;
     return std::any_of(std::begin(pointers_), std::end(pointers_), [this](const Pointer& p) {
-        return p.active && p.x > (float)vw_ * 0.70f && p.y > (float)vh_ * 0.72f;
+        return p.active && inFireZone(p);
     });
 }
 
@@ -119,6 +167,20 @@ void Game::onPointerUp(int id) {
 }
 void Game::onPointersCancel() {
     for (auto& p : pointers_) p.active = false;
+}
+
+void Game::onAppPause() {
+    onPointersCancel();
+    tapPending_ = false;
+    if (audio_) audio_->setThrust(false);
+    // Park a human's round on the settings overlay so it doesn't resume the
+    // instant the shade closes. Auto-run keeps its round: the main loop stops
+    // calling update() while inactive, and an unattended run (CI replay
+    // scripts) has nobody to tap BACK.
+    if ((state_ == PLAYING || state_ == LEVEL_CLEAR) && !autoRunActive_) {
+        prevState_ = state_;
+        state_ = SETTINGS;
+    }
 }
 
 // ── High score persistence ────────────────────────────────────────────────────
@@ -150,8 +212,6 @@ void Game::loadHighScores() {
 
 void Game::saveHighScores() {
     if (dataPath_[0] == '\0') return;
-    FILE* f = fopen(dataPath_, "wb");
-    if (!f) return;
     struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
     buf.magic = kHsMagic;
     buf.count = kMaxScores;
@@ -159,8 +219,7 @@ void Game::saveHighScores() {
         buf.e[i].score = (int64_t)highScores_[i].score;
         buf.e[i].level = highScores_[i].level;
     }
-    fwrite(&buf, sizeof(buf), 1, f);
-    fclose(f);
+    writeFileAtomic(dataPath_, &buf, sizeof(buf));
 }
 
 static const uint32_t kSettingsMagic = 0x53455454u;  // "SETT"
@@ -189,18 +248,15 @@ void Game::loadSettings() {
 
 void Game::saveSettings() {
     if (settingsPath_[0] == '\0') return;
-    FILE* f = fopen(settingsPath_, "wb");
-    if (!f) return;
     struct { uint32_t magic; int32_t soundOn; int32_t autoRun; } buf = {
         kSettingsMagic, soundEnabled_ ? 1 : 0, autoRunActive_ ? 1 : 0
     };
-    fwrite(&buf, sizeof(buf), 1, f);
-    fclose(f);
+    writeFileAtomic(settingsPath_, &buf, sizeof(buf));
 }
 
 bool Game::isGearTap(float px, float py) const {
-    float wy = 2.0f * py / (float)vh_ - 1.0f;
-    float wx = (2.0f * px / (float)vw_ - 1.0f) * asp_;
+    float wx, wy;
+    toWorld(px, py, wx, wy);
     float dx = wx - (asp_ - kGearOffsetX), dy = wy - kGearWY;
     return dx*dx + dy*dy < 0.0081f;  // 0.09 world units radius
 }
@@ -317,9 +373,7 @@ void Game::spawnAsteroid(bool ambient) {
     a.cr = 0.62f + tint;
     a.cg = 0.55f + tint * 0.6f;
     a.cb = 0.48f + tint * 0.4f;
-    a.gen = 0;
-    a.type = AT_NORMAL;
-    a.hp   = 1;
+    // gen / type / hp keep their Asteroid defaults (0 / AT_NORMAL / 1).
 
     // Higher levels introduce fast and armored variants.
     if (!ambient && level_ >= 7 && frand() < 0.18f + 0.02f * (float)(level_ - 7)) {
@@ -370,8 +424,8 @@ void Game::splitAsteroid(const Asteroid& a) {
         child.cr = a.cr; child.cg = a.cg; child.cb = a.cb;
         randomizeRockVisuals(child);
         child.gen  = a.gen + 1;
-        child.type = AT_NORMAL;  // split children are never armored — visual promise matches HP
-        child.hp   = 1;
+        // type / hp keep their defaults: split children are never armored,
+        // so the visual promise matches the HP.
         child.alive = true;
         asteroids_.push_back(child);
     }
@@ -394,26 +448,23 @@ void Game::update(float dt) {
     animTime_ += dt;
 
     // Particles and explosions animate in all states.
+    const float drag = expf(kParticleDragRate * dt);
     for (auto& p : particles_) {
         if (!p.alive) continue;
         p.x  += p.vx * dt; p.y  += p.vy * dt;
-        p.vx *= 0.88f;     p.vy *= 0.88f; // drag
+        p.vx *= drag;      p.vy *= drag;
         p.rot += p.spin * dt;
         p.t   += dt;
         if (p.t >= p.maxLife) p.alive = false;
     }
-    particles_.erase(std::remove_if(particles_.begin(), particles_.end(),
-                                    [](const Particle& p) { return !p.alive; }),
-                     particles_.end());
+    eraseDead(particles_);
 
     for (auto& e : explosions_) {
         if (!e.alive) continue;
         e.t += dt;
         if (e.t >= e.maxLife) e.alive = false;
     }
-    explosions_.erase(std::remove_if(explosions_.begin(), explosions_.end(),
-                                     [](const Explosion& e) { return !e.alive; }),
-                      explosions_.end());
+    eraseDead(explosions_);
 
     // Stars scroll in every state for a sense of motion.
     for (auto& s : stars_) {
@@ -429,7 +480,7 @@ void Game::update(float dt) {
     if (shakeAmt_ > 0.0f) {
         shakeX_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
         shakeY_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
-        shakeAmt_ *= 0.78f;
+        shakeAmt_ *= expf(kShakeDecayRate * dt);
         if (shakeAmt_ < 0.01f) { shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f; }
     }
 
@@ -453,6 +504,7 @@ void Game::update(float dt) {
                 a.y += a.vy * dt; a.rot += a.spin * dt;
                 if (a.y - a.r > 1.1f) a.alive = false;
             }
+            eraseDead(asteroids_);
             break;
         }
         case PLAYING: {
@@ -467,14 +519,15 @@ void Game::update(float dt) {
             if (comboTimer_ > 0.0f) { comboTimer_ -= dt; if (comboTimer_ <= 0.0f) comboCount_ = 0; }
             if (comboDisplayTimer_ > 0.0f) comboDisplayTimer_ -= dt;
 
-            // One frame of gameplay, in order. State may flip to GAME_OVER/WIN
-            // mid-sequence; later steps still run (matching the original
-            // single-block behavior) and checkLevelClear() re-checks the state.
+            // One frame of gameplay, in order. A step may flip the state to
+            // GAME_OVER (fatal hit); the remaining gameplay steps are skipped
+            // so nothing scores, spawns, or wins after the high score has
+            // already been recorded.
             updatePowerUps(dt);
             updateBossFight(dt);
-            updateShipMotion(dt);
-            updateAsteroids(dt);
-            updateBullets(dt);
+            if (state_ == PLAYING) updateShipMotion(dt);
+            if (state_ == PLAYING) updateAsteroids(dt);
+            if (state_ == PLAYING) updateBullets(dt);
             removeDeadEntities();
             checkLevelClear();
             break;
@@ -494,9 +547,7 @@ void Game::update(float dt) {
                 a.y += a.vy * dt; a.rot += a.spin * dt;
                 if (a.y - a.r > 1.1f) a.alive = false;
             }
-            asteroids_.erase(std::remove_if(asteroids_.begin(), asteroids_.end(),
-                                            [](const Asteroid& a) { return !a.alive; }),
-                             asteroids_.end());
+            eraseDead(asteroids_);
             if (state_ == GAME_OVER && asteroids_.size() < 4) {
                 spawnTimer_ -= dt;
                 if (spawnTimer_ <= 0.0f) { spawnAsteroid(true); spawnTimer_ = 0.9f; }
@@ -510,8 +561,8 @@ void Game::update(float dt) {
         }
         case SETTINGS: {
             if (tapped) {
-                float wy = 2.0f * tapY_ / (float)vh_ - 1.0f;
-                float wx = (2.0f * tapX_ / (float)vw_ - 1.0f) * asp_;
+                float wx, wy;
+                toWorld(tapX_, tapY_, wx, wy);
                 const float kHitH = 0.12f;
                 // Rows respond only across the label-to-toggle span, not the
                 // full screen width (avoids accidental edge taps).
@@ -596,9 +647,7 @@ void Game::updatePowerUps(float dt) {
             if (audio_ && soundEnabled_) audio_->triggerPowerUp();
         }
     }
-    powerUps_.erase(std::remove_if(powerUps_.begin(), powerUps_.end(),
-                                   [](const PowerUp& pu) { return !pu.alive; }),
-                    powerUps_.end());
+    eraseDead(powerUps_);
 }
 
 void Game::updateBossFight(float dt) {
@@ -618,14 +667,12 @@ void Game::updateBossFight(float dt) {
 
 void Game::updateShipMotion(float dt) {
     // Horizontal movement + tilt
-    int dir = (rightHeld() ? 1 : 0) - (leftHeld() ? 1 : 0);
+    float dir = (rightHeld() ? 1.0f : 0.0f) - (leftHeld() ? 1.0f : 0.0f);
     float effectiveSpeed = shipSpeed_ * (speedBoostActive_ ? 1.65f : 1.0f);
-    shipX_ += (float)dir * effectiveSpeed * dt;
-    float lim = asp_ - shipScale_;
-    if (shipX_ > lim) shipX_ = lim;
-    if (shipX_ < -lim) shipX_ = -lim;
+    shipX_ += dir * effectiveSpeed * dt;
+    clampShipX();
     // Smoothly lean into direction of travel (±20°)
-    float tiltTarget = (float)dir * 0.35f;
+    float tiltTarget = dir * 0.35f;
     shipTilt_ += (tiltTarget - shipTilt_) * 9.0f * dt;
 
     // Vertical thrust / gravity
@@ -659,6 +706,7 @@ void Game::updateAsteroids(float dt) {
                 a.alive = false;
                 spawnDebris(a.x, a.y, a.r, a.cr, a.cg, a.cb);
                 applyShipHit();
+                if (state_ != PLAYING) break;  // fatal: no dodge points this frame
             }
         }
         if (a.alive && (a.y - a.r > 1.05f ||
@@ -727,6 +775,7 @@ void Game::updateBullets(float dt) {
                     if (audio_) audio_->setThrust(false);
                     state_ = WIN; stateTimer_ = 0.0f;
                     checkHighScore();
+                    return;   // the table is written: nothing else scores this frame
                 }
                 continue;
             }
@@ -774,12 +823,8 @@ void Game::updateBullets(float dt) {
 }
 
 void Game::removeDeadEntities() {
-    asteroids_.erase(std::remove_if(asteroids_.begin(), asteroids_.end(),
-                                    [](const Asteroid& a) { return !a.alive; }),
-                     asteroids_.end());
-    bullets_.erase(std::remove_if(bullets_.begin(), bullets_.end(),
-                                  [](const Bullet& b) { return !b.alive; }),
-                   bullets_.end());
+    eraseDead(asteroids_);
+    eraseDead(bullets_);
 }
 
 void Game::checkLevelClear() {
@@ -835,23 +880,24 @@ void Game::drawDigit(std::vector<DrawCmd>& out, int dgt, float cx, float cy,
     if (mask & 64) seg(cx, cy, hSegX, hSegY);                   // g middle
 }
 
-int Game::numDigits(int v) {
+int Game::numDigits(long v) {
     if (v <= 0) return 1;
     int n = 0;
     while (v > 0) { n++; v /= 10; }
     return n;
 }
 
-void Game::drawNumber(std::vector<DrawCmd>& out, int value, float firstCx, float cy,
+void Game::drawNumber(std::vector<DrawCmd>& out, long value, float firstCx, float cy,
                       float h, float r, float g, float b, float a) const {
     if (value < 0) value = 0;
     int n = numDigits(value);
     float w = h * 0.60f;
     float step = w * 1.45f;
-    int digits[12];
-    int tmp = value, count = 0;
+    int digits[20];   // enough for any 64-bit value
+    long tmp = value;
+    int count = 0;
     if (value == 0) { digits[count++] = 0; }
-    while (tmp > 0 && count < 12) { digits[count++] = tmp % 10; tmp /= 10; }
+    while (tmp > 0 && count < 20) { digits[count++] = (int)(tmp % 10); tmp /= 10; }
     // digits[] is reversed; draw most-significant first.
     for (int i = 0; i < n; i++) {
         int dgt = digits[n - 1 - i];
@@ -1098,7 +1144,7 @@ void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float siz
 
     // Centre hole punched through in background colour
     emit(out, SHAPE_ASTEROID, cx, cy, size * 0.30f, size * 0.30f, 0.0f,
-         0.03f, 0.04f, 0.09f, a);
+         kClearColor[0], kClearColor[1], kClearColor[2], a);
 }
 
 void Game::drawSettingsScreen(std::vector<DrawCmd>& out) const {
@@ -1267,14 +1313,13 @@ void Game::render(std::vector<DrawCmd>& out) {
 
     // HUD during gameplay — drawn without screen shake so it stays readable on hit.
     if (state_ == PLAYING || state_ == LEVEL_CLEAR) {
-        float savedShakeX = shakeX_, savedShakeY = shakeY_;
-        shakeX_ = 0.0f; shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
 
         float h = 0.085f;
         float w = h * 0.60f;
         float step = w * 1.45f;
         // score top-left
-        drawNumber(out, (int)score_, -asp_ + 0.06f + w * 0.5f, -0.90f, h,
+        drawNumber(out, score_, -asp_ + 0.06f + w * 0.5f, -0.90f, h,
                    1.0f, 1.0f, 1.0f, 1.0f);
         // level number top-right (yellow), right-aligned — supports 2 digits at level 10
         int nd = numDigits(level_);
@@ -1293,36 +1338,31 @@ void Game::render(std::vector<DrawCmd>& out) {
 
         drawPowerUpHUD(out);
         drawBossHealthBar(out);
-
-        shakeX_ = savedShakeX; shakeY_ = savedShakeY;
-    }
-
-    // Combo indicator — shake-free, centered on screen.
-    if (state_ == PLAYING || state_ == LEVEL_CLEAR) {
-        float savedShakeX = shakeX_, savedShakeY = shakeY_;
-        shakeX_ = 0.0f; shakeY_ = 0.0f;
+        // Combo indicator — centered on screen.
         drawComboIndicator(out);
-        shakeX_ = savedShakeX; shakeY_ = savedShakeY;
     }
 
     // Touch button zones (only during active gameplay) — also shake-free.
     if (state_ == PLAYING) {
-        float savedShakeX2 = shakeX_, savedShakeY2 = shakeY_;
-        shakeX_ = 0.0f; shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
         bool th = thrustHeld(), fh = fireHeld();
+        // Zone quads in world space, from the same fractions the input uses.
+        const float zoneTop = 2.0f * kZoneTopY - 1.0f;
+        const float zoneCy  = (zoneTop + 1.0f) * 0.5f, zoneHh = (1.0f - zoneTop) * 0.5f;
+        const float thrustCx = -asp_ * (1.0f - kThrustZoneW), thrustHw = asp_ * kThrustZoneW;
+        const float fireCx   =  asp_ * kFireZoneX, fireHw = asp_ * (1.0f - kFireZoneX);
         // Thrust zone: bottom-left corner
-        emit(out, SHAPE_QUAD, -asp_ * 0.70f, 0.72f, asp_ * 0.30f, 0.28f, 0.0f,
+        emit(out, SHAPE_QUAD, thrustCx, zoneCy, thrustHw, zoneHh, 0.0f,
              0.30f, 0.60f, 1.00f, th ? 0.22f : 0.08f);
-        emit(out, SHAPE_SHIP_WINGS, -asp_ * 0.70f, 0.72f, 0.035f, 0.035f, 0.0f,
+        emit(out, SHAPE_SHIP_WINGS, thrustCx, zoneCy, 0.035f, 0.035f, 0.0f,
              0.22f, 0.42f, 0.65f, th ? 1.00f : 0.40f);
-        emit(out, SHAPE_SHIP_BODY,  -asp_ * 0.70f, 0.72f, 0.035f, 0.035f, 0.0f,
+        emit(out, SHAPE_SHIP_BODY,  thrustCx, zoneCy, 0.035f, 0.035f, 0.0f,
              0.28f, 0.72f, 0.92f, th ? 1.00f : 0.40f);
         // Fire zone: bottom-right corner
-        emit(out, SHAPE_QUAD, asp_ * 0.70f, 0.72f, asp_ * 0.30f, 0.28f, 0.0f,
+        emit(out, SHAPE_QUAD, fireCx, zoneCy, fireHw, zoneHh, 0.0f,
              1.00f, 0.40f, 0.20f, fh ? 0.22f : 0.08f);
-        emit(out, SHAPE_QUAD, asp_ * 0.70f, 0.72f, 0.011f, 0.030f, 0.0f,
+        emit(out, SHAPE_QUAD, fireCx, zoneCy, 0.011f, 0.030f, 0.0f,
              1.00f, 0.90f, 0.40f, fh ? 1.00f : 0.45f);
-        shakeX_ = savedShakeX2; shakeY_ = savedShakeY2;
     }
 
     float pulse = 0.5f + 0.5f * sinf(animTime_ * 4.0f);
@@ -1352,7 +1392,7 @@ void Game::render(std::vector<DrawCmd>& out) {
             emit(out, SHAPE_SHIP_WINGS, -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr*0.5f, pg*0.5f, pb*0.5f, 1.0f);
             emit(out, SHAPE_SHIP_BODY,  -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr,      pg,      pb,      1.0f);
             // Score
-            drawNumber(out, (int)highScores_[i].score, -asp_*0.50f, rowY[i], hh, pr, pg, pb, 1.0f);
+            drawNumber(out, highScores_[i].score, -asp_*0.50f, rowY[i], hh, pr, pg, pb, 1.0f);
             // Level digit (right-aligned)
             drawNumber(out, highScores_[i].level, asp_*0.62f, rowY[i], hh, pr, pg, pb, 0.80f);
         }
@@ -1369,12 +1409,12 @@ void Game::render(std::vector<DrawCmd>& out) {
     } else if (state_ == GAME_OVER) {
         emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
              0.6f, 0.05f, 0.08f, 0.32f + 0.10f * pulse);
-        int n = numDigits((int)score_);
+        int n = numDigits(score_);
         float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
         float firstCx = -(float)(n - 1) * fw * 0.5f;
         // Gold pulsing score if new high score, white otherwise
         float sr = 1.0f, sg = newHighScore_ ? (0.75f + 0.20f*pulse) : 1.0f, sb = newHighScore_ ? 0.10f : 1.0f;
-        drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
+        drawNumber(out, score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
         // Rank digit above score when it's a new high score
         if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
             static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
@@ -1391,11 +1431,11 @@ void Game::render(std::vector<DrawCmd>& out) {
     } else if (state_ == WIN) {
         emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
              0.1f, 0.5f, 0.15f, 0.30f + 0.10f * pulse);
-        int n = numDigits((int)score_);
+        int n = numDigits(score_);
         float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
         float firstCx = -(float)(n - 1) * fw * 0.5f;
         float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
-        drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
+        drawNumber(out, score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
         if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
             static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
             static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
@@ -1412,8 +1452,7 @@ void Game::render(std::vector<DrawCmd>& out) {
 
     // ── Gear button — shake-free, top-right corner, every state but SETTINGS ─
     if (state_ != SETTINGS) {
-        float svX = shakeX_, svY = shakeY_;
-        shakeX_ = shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
         float gearWX = asp_ - kGearOffsetX, gearWY = kGearWY;
         float gearA  = 0.55f + 0.12f * sinf(animTime_ * 2.0f);
         float gr = autoRunActive_ ? 0.25f : 0.55f;
@@ -1425,18 +1464,11 @@ void Game::render(std::vector<DrawCmd>& out) {
             drawText(out, "AUTO", gearWX - 0.18f, gearWY, 0.030f,
                      0.25f, 1.00f, 0.38f, autoA);
         }
-        shakeX_ = svX; shakeY_ = svY;
     }
 
     // ── Settings overlay — drawn last so it covers everything ────────────────
     if (state_ == SETTINGS) {
-        float svX = shakeX_, svY = shakeY_;
-        shakeX_ = shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
         drawSettingsScreen(out);
-        shakeX_ = svX; shakeY_ = svY;
     }
-}
-
-void Game::clearColor(float out[3]) {
-    out[0] = 0.03f; out[1] = 0.04f; out[2] = 0.09f;
 }
