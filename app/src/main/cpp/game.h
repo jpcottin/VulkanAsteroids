@@ -183,15 +183,20 @@ public:
         if (type == 2) { speedBoostActive_ = true; speedBoostTimer_ = 10.0f; }
     }
     void spawnTestAsteroid(float x, float y, float r, int gen,
-                           AsteroidType type = AT_NORMAL, int hp = 1) {
+                           AsteroidType type = AT_NORMAL, int hp = 1,
+                           float vx = 0.0f, float vy = 0.0f) {
         Asteroid a;
-        a.x = x; a.y = y; a.vx = 0; a.vy = 0;
+        a.x = x; a.y = y; a.vx = vx; a.vy = vy;
         a.r = r; a.rot = 0; a.spin = 0;
         a.cr = 0.6f; a.cg = 0.5f; a.cb = 0.4f;
         a.gen = gen; a.hp = hp; a.type = type; a.alive = true;
         asteroids_.push_back(a);
     }
-    void spawnTestPowerUp(float x, float y) { spawnPowerUp(x, y); }
+    // type: -1 keeps the random pick, else PowerUpType (0 shield, 1 spread, 2 speed).
+    void spawnTestPowerUp(float x, float y, int type = -1) {
+        spawnPowerUp(x, y);
+        if (type >= 0) powerUps_.back().type = (PowerUpType)type;
+    }
     bool shieldActiveForTest()     const { return shieldActive_; }
     bool spreadActiveForTest()     const { return spreadActive_; }
     bool speedBoostActiveForTest() const { return speedBoostActive_; }
@@ -205,6 +210,8 @@ public:
     bool inTitleForTest()          const { return state_ == TITLE; }
     void setAutoRunForTest(bool v)       { autoRunActive_ = v; }
     bool aiWantsCollectForTest()   const { return aiWantsCollect_; }
+    bool  aiHasTargetForTest()     const { return aiHasTarget_; }
+    float aiAimXForTest()          const { return aiAimX_; }
     void setScoreForTest(long s)         { score_ = s; }
     void clearInvulnForTest()            { invuln_ = 0.0f; }
     bool isGameOverForTest()       const { return state_ == GAME_OVER; }
@@ -213,6 +220,29 @@ public:
     // Total asteroid slots held, dead ones included (leak regression test).
     int  asteroidStorageForTest()  const { return (int)asteroids_.size(); }
     long topHighScoreForTest()     const { return highScores_[0].score; }
+    // Auto Run bench accessors (test/autorun_bench.cpp).
+    void seedRngForTest(uint32_t s)      { rng_ = s ? s : 1u; }
+    int  levelForTest()            const { return level_; }
+    bool isPlayingForTest()        const { return state_ == PLAYING; }
+    bool isLevelClearForTest()     const { return state_ == LEVEL_CLEAR; }
+    int  shotsFiredForTest()       const { return shotsFired_; }
+    int  bulletsLostForTest()      const { return bulletsLost_; }
+    int  killsForTest()            const { return kills_; }
+    int  hitsTakenForTest()        const { return hitsTaken_; }
+    int  bossHitsTakenForTest()    const { return bossHits_; }
+    int  shieldSavesForTest()      const { return shieldSaves_; }
+    bool aiLeftForTest()           const { return aiLeft_; }
+    bool aiRightForTest()          const { return aiRight_; }
+    bool aiThrustForTest()         const { return aiThrust_; }
+    bool aiFireForTest()           const { return aiFire_; }
+    float shipVyForTest()          const { return shipVy_; }
+    // Position, velocity and radius of asteroid slot i (false when the slot is dead).
+    bool asteroidForTest(int i, float& x, float& y, float& vx, float& vy, float& r) const {
+        if (i < 0 || i >= (int)asteroids_.size() || !asteroids_[i].alive) return false;
+        const Asteroid& a = asteroids_[i];
+        x = a.x; y = a.y; vx = a.vx; vy = a.vy; r = a.r;
+        return true;
+    }
 #endif
 
 private:
@@ -289,6 +319,16 @@ private:
     bool aiThrust_      = false;
     bool aiFire_        = false;
     bool aiWantsCollect_ = false;  // last auto-run frame steered to collect a power-up
+    bool  aiHasTarget_  = false;   // last auto-run frame had a rock or the boss to aim at
+    float aiAimX_       = 0.0f;    // where it wanted the gun
+
+    // --- run counters (read by the tests and the Auto Run bench) ---
+    int shotsFired_  = 0;   // volleys fired
+    int bulletsLost_ = 0;   // bullets that left the screen or timed out without a hit
+    int kills_       = 0;   // asteroids destroyed by bullets
+    int hitsTaken_   = 0;   // lives lost
+    int bossHits_    = 0;   // lives lost to the boss
+    int shieldSaves_ = 0;   // hits the shield absorbed
 
     std::vector<Asteroid>  asteroids_;
     std::vector<Bullet>    bullets_;
