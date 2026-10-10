@@ -312,6 +312,8 @@ void Game::startGame() {
     newHighScore_     = false;
     newHighScoreRank_ = -1;
     comboCount_ = 0; comboTimer_ = 0.0f; comboDisplayTimer_ = 0.0f;
+    shotsFired_ = 0; bulletsLost_ = 0; kills_ = 0;
+    hitsTaken_ = 0; bossHits_ = 0; shieldSaves_ = 0;
     // Reset power-ups fully on new game (they only carry across levels, not sessions).
     shieldActive_ = false;    shieldTimer_     = 0.0f;
     spreadActive_ = false;    spreadTimer_     = 0.0f;
@@ -595,10 +597,12 @@ void Game::update(float dt) {
 void Game::applyShipHit() {
     if (shieldActive_) {
         shieldActive_ = false; shieldTimer_ = 0.0f;
+        shieldSaves_++;
         shakeAmt_ = 0.5f;
         return;
     }
     lives_--;
+    hitsTaken_++;
     invuln_ = 1.5f;
     shakeAmt_ = 1.0f;
     comboCount_ = 0; comboTimer_ = 0.0f;
@@ -658,8 +662,10 @@ void Game::updateBossFight(float dt) {
     boss_.x    = sinf(boss_.t * 0.70f) * asp_ * 0.62f;
     if (invuln_ <= 0.0f) {
         float bdx = boss_.x - shipX_, bdy = boss_.y - shipY_;
-        if (bdx*bdx + bdy*bdy < (boss_.r + shipR_) * (boss_.r + shipR_))
+        if (bdx*bdx + bdy*bdy < (boss_.r + shipR_) * (boss_.r + shipR_)) {
+            if (!shieldActive_) bossHits_++;
             applyShipHit();
+        }
     }
     // Boss wraps back from bottom to top so it stays on screen permanently
     if (boss_.y - boss_.r > 1.1f) boss_.y = -1.1f - boss_.r;
@@ -740,6 +746,7 @@ void Game::updateBullets(float dt) {
             fireBullet( shipScale_ * 0.55f,  0.28f);
         }
         fireCooldown_ = kFireCooldown;
+        shotsFired_++;
         if (audio_ && soundEnabled_) audio_->triggerLaser();
     }
 
@@ -749,7 +756,7 @@ void Game::updateBullets(float dt) {
         b.y += b.vy * dt;
         b.life -= dt;
         if (b.x < -asp_ - 0.1f || b.x > asp_ + 0.1f || b.y < -1.15f || b.life <= 0.0f) {
-            b.alive = false; continue;
+            b.alive = false; bulletsLost_++; continue;
         }
 
         // Bullet vs boss
@@ -798,6 +805,7 @@ void Game::updateBullets(float dt) {
                     break;
                 }
                 a.alive = false;
+                kills_++;
                 // Update combo
                 if (comboTimer_ > 0.0f) {
                     comboCount_ = comboCount_ < 4 ? comboCount_ + 1 : 4;
@@ -1026,102 +1034,225 @@ void Game::drawBossHealthBar(std::vector<DrawCmd>& out) const {
     drawText(out, "BOSS", 0.0f, y - 0.045f, 0.038f, fr, fg, fb, 0.85f);
 }
 
+// ---- Auto Run ---------------------------------------------------------------
+// The autopilot looks a short way into the future every frame:
+//   1. it predicts where each bullet in flight lands, so a rock that is as good
+//      as dead is not shot again (an armored rock needs two bullets on the way);
+//   2. it picks the rock to shoot next: lead-aimed, reachable from inside the
+//      ship's corridor and nearest the gun;
+//   3. it rolls the ship forward under every combination of a lateral plan
+//      (hold, go to the aim point, full left, full right) and a vertical plan
+//      (keep altitude, climb, sink), scores each by its closest approach to any
+//      rock or the boss while the ship is vulnerable, and keeps the plan that
+//      stays clear, breaking ties by how close it stays to the aim point and
+//      the preferred altitude. When no plan stays clear it takes the one that
+//      comes closest to doing so;
+//   4. it fires when the gun is lined up with an unclaimed rock or the boss.
+// The horizon is short enough that a rock spawned or split in the meantime is
+// seen on the next frame, long enough to start a dodge before a fast rock is
+// on top of the ship.
+namespace {
+constexpr float kAiHorizon  = 0.60f;          // rollout length (s)
+constexpr float kAiStep     = 1.0f / 30.0f;   // rollout time step (s)
+constexpr float kAiSafe     = 0.04f;          // clearance beyond touching that counts as safe
+constexpr float kAiAltitude = 0.38f;          // ship y to keep when nothing else matters
+constexpr float kBulletR    = 0.012f;         // bullet hit radius (updateBullets)
+constexpr int   kAiMaxRocks = 96;
+constexpr int   kAiMaxBullets = 64;
+
+struct AiRock {
+    float x, y, vx, vy, r;
+    int hp, claims;     // bullets in flight that will hit it
+};
+
+// Earliest time at which bullet (bx,by,bvx,bvy) touches the rock, if it does
+// within the bullet's remaining life. Straight-line motion for both.
+bool bulletHits(float bx, float by, float bvx, float bvy, float life,
+                const AiRock& rk, float& tHit) {
+    float dx = bx - rk.x, dy = by - rk.y;
+    float vx = bvx - rk.vx, vy = bvy - rk.vy;
+    float vv = vx * vx + vy * vy;
+    if (vv < 1e-6f) return false;
+    float R = rk.r + kBulletR;
+    float tc = -(dx * vx + dy * vy) / vv;             // closest approach
+    if (tc < 0.0f) tc = 0.0f;
+    float px = dx + vx * tc, py = dy + vy * tc;
+    float gap = R * R - (px * px + py * py);
+    if (gap < 0.0f) return false;
+    tHit = tc - sqrtf(gap / vv);
+    if (tHit < 0.0f) tHit = 0.0f;
+    return tHit <= life;
+}
+}  // namespace
+
 void Game::updateAutoRun(float dt) {
-    const float kPreferredY   = 0.38f;
-    const float kEvadeRadius  = 0.22f;
-    const float kSteerDeadband = 0.03f;  // don't jitter around an aligned x
+    (void)dt;
+    const float lim   = asp_ - shipScale_;              // clampShipX()
+    const float gunY  = shipY_ - shipScale_ * 1.1f;     // where bullets start
+    const float speed = shipSpeed_ * (speedBoostActive_ ? 1.65f : 1.0f);
 
-    // Find best shoot target: asteroid above ship with shortest approach angle
-    float bestTargetX  = 0.0f;
-    float bestScore    = 1e9f;
-    bool  hasTarget    = false;
-    for (auto& a : asteroids_) {
-        if (!a.alive || a.y >= shipY_) continue;
-        float distX   = fabsf(a.x - shipX_);
-        float urgency = (a.y + 1.2f) + a.vy * 0.4f;
-        float score   = distX / (urgency + 0.01f);
-        if (score < bestScore) { bestScore = score; bestTargetX = a.x; hasTarget = true; }
+    // 1. Rocks, and which of them the bullets already in flight take care of.
+    AiRock rocks[kAiMaxRocks];
+    int n = 0;
+    for (const auto& a : asteroids_) {
+        if (!a.alive || n >= kAiMaxRocks) continue;
+        rocks[n++] = {a.x, a.y, a.vx, a.vy, a.r, a.hp, 0};
     }
-    // Boss: predict 0.4 s ahead for lead aiming
-    if (bossActive_ && boss_.alive) {
-        float predictX = sinf((boss_.t + 0.40f) * 0.70f) * asp_ * 0.62f;
-        float score    = fabsf(predictX - shipX_) / 3.0f;
-        if (score < bestScore) { bestScore = score; bestTargetX = predictX; hasTarget = true; }
+    int order[kAiMaxBullets];
+    int nb = 0;
+    for (int i = 0; i < (int)bullets_.size() && nb < kAiMaxBullets; i++)
+        if (bullets_[i].alive) order[nb++] = i;
+    // The bullet nearest the top lands first and gets first claim.
+    std::sort(order, order + nb, [&](int a, int b) { return bullets_[a].y < bullets_[b].y; });
+    for (int k = 0; k < nb; k++) {
+        const Bullet& b = bullets_[order[k]];
+        int best = -1;
+        float bestT = 1e9f, t;
+        for (int i = 0; i < n; i++) {
+            if (rocks[i].claims >= rocks[i].hp) continue;
+            if (bulletHits(b.x, b.y, b.vx, b.vy, b.life, rocks[i], t) && t < bestT) { bestT = t; best = i; }
+        }
+        if (best >= 0) rocks[best].claims++;
     }
 
-    // Find closest threat for evasion (compare squared distances, sqrt only once)
-    float closestDistSq = 1e18f, closestX = shipX_;
-    for (auto& a : asteroids_) {
-        if (!a.alive) continue;
-        float dx = a.x - shipX_, dy = a.y - shipY_;
-        float dsq = dx*dx + dy*dy;
-        if (dsq < closestDistSq) { closestDistSq = dsq; closestX = a.x; }
+    // 2. The rock to shoot next: the one whose lead-aimed point is nearest the
+    //    gun. A rock the ship cannot line up with from inside its corridor is
+    //    left to fall (it still counts toward the level).
+    auto window = [](float r) { return 0.75f * (r + kBulletR); };   // |aim - ship| that still hits
+    aiHasTarget_ = false;
+    float aimX = shipX_, aimBand = 0.03f, bestCost = 1e9f;
+    for (int i = 0; i < n; i++) {
+        const AiRock& rk = rocks[i];
+        if (rk.claims >= rk.hp || rk.y + rk.r >= gunY) continue;
+        float tHit = (gunY - rk.y) / fmaxf(kBulletSpeed + rk.vy, 0.1f);
+        float ax   = rk.x + rk.vx * tHit;
+        float axc  = std::clamp(ax, -lim, lim);
+        if (fabsf(axc - ax) > window(rk.r)) continue;
+        float cost = fabsf(axc - shipX_) / speed;
+        if (cost < bestCost) {
+            bestCost = cost; aimX = axc; aiHasTarget_ = true;
+            aimBand = std::clamp(0.5f * window(rk.r), 0.01f, 0.03f);
+        }
     }
-    const float closestDist = sqrtf(closestDistSq);
+    float bossAimX = 0.0f;
+    bool  bossAim  = false;
+    if (bossActive_ && boss_.alive && boss_.y + boss_.r < gunY) {
+        float tHit = (gunY - boss_.y) / (kBulletSpeed + boss_.vy);
+        bossAimX = std::clamp(sinf((boss_.t + tHit) * 0.70f) * asp_ * 0.62f, -lim, lim);
+        bossAim  = true;
+        float cost = fabsf(bossAimX - shipX_) / speed;
+        if (cost < bestCost) { bestCost = cost; aimX = bossAimX; aiHasTarget_ = true; aimBand = 0.03f; }
+    }
+    aiAimX_ = aimX;
 
-    // Horizontal: evade > align-to-target > return-to-center
-    if (closestDist < kEvadeRadius) {
-        if (closestX >= shipX_) aiLeft_ = true; else aiRight_ = true;
-    } else if (hasTarget) {
-        float dx = bestTargetX - shipX_;
-        if (fabsf(dx) > kSteerDeadband) { if (dx > 0) aiRight_ = true; else aiLeft_ = true; }
-    } else {
-        if      (shipX_ >  0.05f) aiLeft_  = true;
-        else if (shipX_ < -0.05f) aiRight_ = true;
-    }
-    // Power-up collection: steer to intercept the most quickly reachable
-    // power-up — but only when the path to it is clear. Evasion always wins;
-    // collection outranks target alignment.
-    const float kCollectMargin = 0.16f;  // safety buffer around the steering corridor
+    // Power-up collection: head for the most quickly reachable power-up when
+    // the corridor to it is free of rocks. The rollouts below still veto the
+    // move if a rock would get in the way.
+    const float kCollectMargin = 0.16f;
     const PowerUp* collect = nullptr;
-    if (closestDist > kEvadeRadius) {
+    {
         float bestT = 1e9f;
-        for (auto& pu : powerUps_) {
+        for (const auto& pu : powerUps_) {
             if (!pu.alive) continue;
-            float tFall = (shipY_ - pu.y) / pu.vy;  // time until it falls to our altitude
-            if (tFall < -0.3f) continue;            // already dropped past the ship
-            if (tFall < 0.0f) tFall = 0.0f;         // slightly below — still catchable
-            float tSteer = fabsf(pu.x - shipX_) / shipSpeed_;
-            if (tSteer > tFall + 1.2f) continue;    // can't reach it before it escapes
-            float t = tSteer > tFall ? tSteer : tFall;
-            // Skip if any asteroid currently sits in the steering corridor
-            // between the ship and the power-up (plus a safety margin).
+            if (pu.type == PU_SHIELD && shieldActive_) continue;   // nothing to gain
+            float tFall = (shipY_ - pu.y) / pu.vy;   // time until it falls to our altitude
+            if (tFall < -0.3f) continue;             // already dropped past the ship
+            if (tFall < 0.0f) tFall = 0.0f;          // slightly below: still catchable
+            float tSteer = fabsf(pu.x - shipX_) / speed;
+            if (tSteer > tFall + 1.2f) continue;     // gone before the ship gets there
+            float t = fmaxf(tSteer, tFall);
             float loX = fminf(shipX_, pu.x), hiX = fmaxf(shipX_, pu.x);
             float loY = fminf(shipY_, pu.y), hiY = fmaxf(shipY_, pu.y);
             bool pathClear = true;
-            for (auto& a : asteroids_) {
-                if (!a.alive) continue;
-                float m = kCollectMargin + a.r;
-                if (a.x > loX - m && a.x < hiX + m && a.y > loY - m && a.y < hiY + m) {
-                    pathClear = false; break;
-                }
+            for (int i = 0; i < n && pathClear; i++) {
+                float m = kCollectMargin + rocks[i].r;
+                if (rocks[i].x > loX - m && rocks[i].x < hiX + m &&
+                    rocks[i].y > loY - m && rocks[i].y < hiY + m) pathClear = false;
             }
-            if (!pathClear) continue;
-            if (t < bestT) { bestT = t; collect = &pu; }
-        }
-        if (collect) {
-            float dx = collect->x - shipX_;
-            aiLeft_ = aiRight_ = false;
-            if      (dx >  kSteerDeadband) aiRight_ = true;
-            else if (dx < -kSteerDeadband) aiLeft_  = true;
+            if (pathClear && t < bestT) { bestT = t; collect = &pu; }
         }
     }
     aiWantsCollect_ = (collect != nullptr);
 
-    // Vertical: thrust to maintain preferred altitude; emergency if threat is very close
-    bool emergency = closestDist < kEvadeRadius * 0.7f;
-    aiThrust_ = (shipY_ > kPreferredY + 0.06f) || emergency;
-    // Cut thrust to sink onto a power-up that is below the ship.
-    if (collect && !emergency && collect->y > shipY_ + 0.02f) aiThrust_ = false;
-
-    // Fire when aligned with target
-    float fireThresh = spreadActive_ ? 0.14f : 0.055f;
-    if (hasTarget && fabsf(bestTargetX - shipX_) < fireThresh) aiFire_ = true;
-    if (bossActive_ && boss_.alive) {
-        float bossThresh = spreadActive_ ? 0.20f : 0.08f;
-        if (fabsf(boss_.x - shipX_) < bossThresh) aiFire_ = true;
+    float desiredX = aiHasTarget_ ? aimX : 0.0f;
+    float desiredY = kAiAltitude;
+    float stopBand = aimBand;
+    if (collect) {
+        desiredX = std::clamp(collect->x, -lim, lim);
+        stopBand = 0.03f;
+        if (collect->y > shipY_ + 0.02f) desiredY = fminf(collect->y, 0.92f);   // sink onto it
     }
-    (void)dt;
+
+    // 3. Roll the ship forward under each plan and keep the one that stays
+    //    clear of every rock and the boss.
+    enum { LAT_HOLD, LAT_AIM, LAT_LEFT, LAT_RIGHT, kLatPlans };
+    enum { VERT_KEEP, VERT_CLIMB, VERT_SINK, kVertPlans };
+    auto latDir = [&](int lat, float x) {
+        if (lat == LAT_LEFT)  return -1;
+        if (lat == LAT_RIGHT) return  1;
+        if (lat == LAT_AIM) {
+            float d = desiredX - x;
+            if (fabsf(d) > stopBand) return d > 0.0f ? 1 : -1;
+        }
+        return 0;
+    };
+    auto thrustFor = [&](int vert, float y) {
+        if (vert == VERT_CLIMB) return true;
+        if (vert == VERT_SINK)  return false;
+        return y > desiredY + 0.06f;
+    };
+    int   bestLat = LAT_HOLD, bestVert = VERT_KEEP;
+    float bestClear = -1e9f, bestGoal = 1e9f;
+    bool  bestSafe = false;
+    for (int lat = 0; lat < kLatPlans; lat++) {
+        for (int vert = 0; vert < kVertPlans; vert++) {
+            float x = shipX_, y = shipY_, vy = shipVy_;
+            float minClear = 1e9f, goal = 0.0f;
+            for (float t = kAiStep; t <= kAiHorizon + 1e-4f; t += kAiStep) {
+                x  = std::clamp(x + (float)latDir(lat, x) * speed * kAiStep, -lim, lim);
+                vy = std::clamp(vy + (thrustFor(vert, y) ? -kThrustAcc : kGravity) * kAiStep,
+                                -kMaxShipVy, kMaxShipVy);
+                y += vy * kAiStep;
+                if (y > 0.92f) { y = 0.92f; if (vy > 0.0f) vy = 0.0f; }
+                if (y < 0.12f) { y = 0.12f; if (vy < 0.0f) vy = 0.0f; }
+                if (t > invuln_) {
+                    for (int i = 0; i < n; i++) {
+                        float dx = rocks[i].x + rocks[i].vx * t - x;
+                        float dy = rocks[i].y + rocks[i].vy * t - y;
+                        float c  = sqrtf(dx * dx + dy * dy) - (rocks[i].r + shipR_);
+                        if (c < minClear) minClear = c;
+                    }
+                    if (bossActive_ && boss_.alive) {
+                        float dx = sinf((boss_.t + t) * 0.70f) * asp_ * 0.62f - x;
+                        float dy = boss_.y + boss_.vy * t - y;
+                        float c  = sqrtf(dx * dx + dy * dy) - (boss_.r + shipR_);
+                        if (c < minClear) minClear = c;
+                    }
+                }
+                goal += (fabsf(x - desiredX) + 0.3f * fabsf(y - desiredY)) * kAiStep;
+            }
+            bool safe = minClear >= kAiSafe;
+            bool better = safe ? (!bestSafe || goal < bestGoal)
+                               : (!bestSafe && minClear > bestClear);
+            if (better) {
+                bestLat = lat; bestVert = vert;
+                bestSafe = safe; bestClear = minClear; bestGoal = goal;
+            }
+        }
+    }
+    int dir = latDir(bestLat, shipX_);
+    aiLeft_   = dir < 0;
+    aiRight_  = dir > 0;
+    aiThrust_ = thrustFor(bestVert, shipY_);
+
+    // 4. Fire at whatever unclaimed rock the gun is lined up with, and at the boss.
+    for (int i = 0; i < n && !aiFire_; i++) {
+        const AiRock& rk = rocks[i];
+        if (rk.claims >= rk.hp || rk.y + rk.r >= gunY) continue;
+        float tHit = (gunY - rk.y) / fmaxf(kBulletSpeed + rk.vy, 0.1f);
+        if (fabsf(rk.x + rk.vx * tHit - shipX_) < window(rk.r)) aiFire_ = true;
+    }
+    if (bossAim && fabsf(bossAimX - shipX_) < window(boss_.r)) aiFire_ = true;
 }
 
 void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,

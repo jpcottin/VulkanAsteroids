@@ -3,10 +3,11 @@
 [![CI](https://github.com/jpcottin/VulkanAsteroids/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jpcottin/VulkanAsteroids/actions/workflows/ci.yml)
 
 <details>
-<summary><b>CI details</b> — native tests + smoke matrix, API 34 → 37.1, plus Android CLI and Emulator Preview legs</summary>
+<summary><b>CI details</b> — Auto Run bench, native tests + smoke matrix, API 34 → 37.1, plus Android CLI and Emulator Preview legs</summary>
 
 | Legs | Image | Emulator channel | GPU | Gating |
 |---|---|---|---|---|
+| Auto Run bench | host build, no emulator | — | — | ✅ blocking |
 | Native tests: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
 | Smoke: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` (16 KB page size) | stable | lavapipe | non-blocking |
@@ -53,7 +54,7 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 - **Background music:** procedurally synthesised ambient space track (A-minor pad + bass + arpeggio) starts with each new game.
 - **Power-up collection sound:** rising sparkle arpeggio on pickup.
 - **Settings:** gear icon (top-right) opens an overlay from any game state. Toggles: Sound on/off (persisted to disk), Auto Run. Both preferences survive app restarts.
-- **Auto Run:** AI autopilot mode — the ship steers autonomously, evades threats, intercepts falling power-ups only when the path to them is clear of asteroids, aligns to targets, and fires. Activate from Settings; gear turns green with a pulsing "AUTO" label while active.
+- **Auto Run:** AI autopilot mode — the ship looks 0.6 s ahead every frame: it predicts each rock's path and the boss's drift, rolls itself forward under a handful of steering and thrust plans and keeps the one that stays clear (or the one that comes closest when nothing does), counts the bullets already in flight so a rock that is as good as dead is not shot twice, lead-aims drifting rocks, leaves rocks it cannot line up with to fall past, and chases a power-up only when it can reach it (a shield is skipped while one is up). Activate from Settings; gear turns green with a pulsing "AUTO" label while active.
 
 ## Tech
 
@@ -103,12 +104,14 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-43 tests covering ship physics, input zones, bullets, spread shot, speed
+53 tests covering ship physics, input zones, bullets, spread shot, speed
 boost, asteroid splitting, combo multiplier, armored asteroid HP, boss
 spawn, power-up session isolation, power-up pickup scoring, settings state
 machine (gear tap, back button, sound/auto-run toggles, row hit-bounds,
 persistence, multi-touch tap race), and auto-run AI (fire alignment, lateral
-steering, power-up interception, declining blocked power-ups). Run on a connected device or emulator:
+steering, power-up interception, declining blocked power-ups, holding fire on
+a rock a bullet is already heading for, lead aiming, dodging a falling rock
+onto the safe side, skipping a redundant shield). Run on a connected device or emulator:
 
 ```bash
 # ARM device (default)
@@ -117,6 +120,33 @@ steering, power-up interception, declining blocked power-ups). Run on a connecte
 # x86_64 emulator
 ./gradlew runNativeTests -PtestAbi=x86_64
 ```
+
+### Auto Run bench (host build)
+
+`scripts/autorun-bench.sh` compiles `game.cpp` with the host compiler (no
+Android SDK, no emulator — `app/src/main/cpp/test/host/` stands in for
+`<android/log.h>`) and plays seeded, headless games with the autopilot. It
+reports, per level and per campaign, how often the autopilot clears the level,
+how many lives it loses (and how many the shield saved), how long a clear
+takes, kills per run, shots per kill and bullets lost off-screen:
+
+```bash
+scripts/autorun-bench.sh --runs 500 --levels --campaigns          # portrait phone
+scripts/autorun-bench.sh --width 2400 --height 1080 --campaigns   # landscape
+scripts/autorun-bench.sh --runs 100 --levels --trace              # dump every lost life
+```
+
+Runs are seeded, so two builds of the same code give the same numbers and a
+change to the autopilot is a before/after comparison. CI plays 300 portrait
+and 100 landscape campaigns and fails when fewer than 95% are won. Numbers
+for the current autopilot (campaigns won / lives lost per campaign / average
+length of a won campaign):
+
+| Screen | Before the look-ahead | Now |
+|---|---|---|
+| Portrait 1080×2400, 2000 campaigns | 74.2% / 3.03 / 61 s | 100% / 0.11 / 56 s |
+| Foldable inner 2152×2076, 500 campaigns | 63.8% / 3.48 / 67 s | 100% / 0.01 / 61 s |
+| Landscape 2400×1080, 500 campaigns | 56.8% / 3.71 / 74 s | 100% / 0.00 / 67 s |
 
 ### Instrumented smoke test
 
@@ -129,7 +159,7 @@ Vulkan to initialise, and asserts the activity is still `RESUMED`:
 
 ## CI/CD
 
-GitHub Actions runs on every push and pull request to `main`. The first three
+GitHub Actions runs on every push and pull request to `main`. The first four
 jobs gate merges. The last four explore newer Android emulator tooling and are
 marked `continue-on-error`, so a preview package that moves underneath us
 reports its findings without ever blocking a PR.
@@ -137,7 +167,8 @@ reports its findings without ever blocking a PR.
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs 43 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Auto Run bench** | Builds `game.cpp` with the host compiler and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
+| **Native Tests** | Runs 53 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. Blocking on API 34 + 36; non-blocking preview legs on API 37.0 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*` |
 | **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |

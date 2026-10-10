@@ -650,6 +650,100 @@ TEST(AutoRun, SkipsPowerUpBlockedByAsteroid) {
     EXPECT_FALSE(g.aiWantsCollectForTest());
 }
 
+TEST(AutoRun, DoesNotFireAtARockABulletIsAlreadyOnItsWayTo) {
+    // One bullet is enough for a plain rock: while it is in flight the
+    // autopilot holds fire instead of pumping more bullets into the same rock.
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.30f, 0.06f, 2);   // straight above the gun
+    g.setAutoRunForTest(true);
+    g.update(0.016f);
+    ASSERT_EQ(g.bulletCount(), 1);
+    ASSERT_TRUE(g.aiFireForTest());
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiHasTargetForTest() == false || g.aiFireForTest() == false);
+    EXPECT_FALSE(g.aiFireForTest());
+}
+
+TEST(AutoRun, KeepsFiringAtAnArmoredRockUntilTwoBulletsAreOnTheWay) {
+    // An armored rock takes two hits, so one bullet in flight does not
+    // satisfy the autopilot: it still wants to fire.
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.30f, 0.07f, 2, Game::AT_ARMORED, 2);
+    g.setAutoRunForTest(true);
+    g.update(0.016f);
+    ASSERT_EQ(g.bulletCount(), 1);
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiFireForTest());
+}
+
+TEST(AutoRun, LeadsARockThatIsDriftingSideways) {
+    // A rock drifting right is aimed at where it will be when the bullet
+    // arrives, not where it is now.
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(-0.15f, 0.20f, 0.05f, 2, Game::AT_NORMAL, 1, 0.40f, 0.0f);
+    g.setAutoRunForTest(true);
+    g.update(0.016f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_GT(g.aiAimXForTest(), -0.15f + 0.03f);
+    EXPECT_LT(g.aiAimXForTest(), 0.0f);
+}
+
+TEST(AutoRun, DodgesARockFallingOntoIt) {
+    // A tough rock drops straight onto the ship faster than the gun can
+    // kill it: the autopilot steps aside and keeps its lives.
+    Game g;
+    startPlaying(g);
+    g.update(1.0f);                                   // settle
+    g.clearInvulnForTest();
+    g.setAutoRunForTest(true);
+    int lives = g.lives();
+    float x0 = g.shipX();
+    g.spawnTestAsteroid(x0, g.shipY() - 0.35f, 0.10f, 2, Game::AT_ARMORED, 9, 0.0f, 1.5f);
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiLeftForTest() || g.aiRightForTest());
+    float moved = 0.0f;
+    for (int i = 0; i < 60; i++) {
+        g.update(1.0f / 60.0f);
+        moved = fmaxf(moved, fabsf(g.shipX() - x0));
+    }
+    EXPECT_GT(moved, 0.10f);
+    EXPECT_EQ(g.lives(), lives);
+}
+
+TEST(AutoRun, DodgesAwayFromTheSecondRock) {
+    // Same drop, but a second rock hangs at ship height just to the right:
+    // the way out is to the left.
+    Game g;
+    startPlaying(g);
+    g.update(1.0f);
+    g.clearInvulnForTest();
+    g.setAutoRunForTest(true);
+    float x0 = g.shipX(), y0 = g.shipY();
+    g.spawnTestAsteroid(x0, y0 - 0.35f, 0.10f, 2, Game::AT_ARMORED, 9, 0.0f, 1.5f);
+    g.spawnTestAsteroid(x0 + 0.22f, y0, 0.08f, 2, Game::AT_ARMORED, 9);
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiLeftForTest());
+    EXPECT_FALSE(g.aiRightForTest());
+}
+
+TEST(AutoRun, LeavesAShieldPickupWhileShielded) {
+    // A second shield adds nothing while one is up, so the autopilot does
+    // not go out of its way for it.
+    Game g;
+    startPlaying(g);
+    g.setAutoRunForTest(true);
+    g.activatePowerUpForTest(0);
+    g.spawnTestPowerUp(g.shipX() + 0.30f, g.shipY() - 0.40f, 0);   // a shield, up & right
+    g.update(0.016f);
+    EXPECT_FALSE(g.aiWantsCollectForTest());
+    g.spawnTestPowerUp(g.shipX() + 0.30f, g.shipY() - 0.40f, 1);   // spread shot: worth it
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiWantsCollectForTest());
+}
+
 // ── Render ─────────────────────────────────────────────────────────────────────
 
 // The end-screen score must shrink to fit: at the fixed 0.30 glyph height,
