@@ -48,8 +48,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Both legs gate; they render with lavapipe (Mesa's CPU Vulkan
+          # driver) and -gpu auto rather than swiftshader_indirect.
           - api-level: 34
-            gpu: swiftshader_indirect
+            gpu: lavapipe
           - api-level: 36
             gpu: auto
 
@@ -114,9 +116,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Stock x86_64 legs — these gate (blocking).
+          # Stock x86_64 legs — these gate (blocking). They render with lavapipe
+          # (Mesa's CPU Vulkan driver) and -gpu auto rather than
+          # swiftshader_indirect, the same backends as the preview legs.
           - api-level: '34'
-            gpu: swiftshader_indirect
+            gpu: lavapipe
           - api-level: '36'
             gpu: auto
           # API 37.x (16 KB page-size images); 4 GB RAM / 4 cores. channel

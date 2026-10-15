@@ -8,8 +8,8 @@
 | Legs | Image | Emulator channel | GPU | Gating |
 |---|---|---|---|---|
 | Auto Run bench | host build, no emulator | — | — | ✅ blocking |
-| Native tests: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
-| Smoke: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
+| Native tests: API 34, 36 | `default` x86_64 | stable | lavapipe / auto | ✅ blocking |
+| Smoke: API 34, 36 | `default` x86_64 | stable | lavapipe / auto | ✅ blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` (16 KB page size) | stable | lavapipe | non-blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` | canary (`--channel=3`) | lavapipe, auto | non-blocking |
 | Smoke: API 37.1 | `google_apis_ps16k` | canary | lavapipe, auto | non-blocking |
@@ -170,7 +170,7 @@ reports its findings without ever blocking a PR.
 | **Build APK** | Compiles the debug APK | `debug-apk` |
 | **Auto Run bench** | Builds `game.cpp` with the host compiler and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
 | **Native Tests** | Runs 53 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. Blocking on API 34 + 36; non-blocking preview legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
+| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. Blocking on API 34 + 36; non-blocking preview legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*` |
 | **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |
 | **Emulator Preview multi-run** | Four boot cycles against the same AVD with quickboot snapshots enabled: each cycle plays the game briefly, screenshots it, then shuts down so the emulator saves its snapshot. Checks whether a live Vulkan app survives snapshot save/restore | `preview-multirun-screenshots`, `preview-multirun-emulator-logs` |
