@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <vector>
+#include <string>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -528,8 +530,13 @@ TEST(Settings, AutoRunToggleFlipsAutoRunActive) {
 }
 
 TEST(Settings, AutoRunPersistedAcrossSaveLoad) {
-    char tmpDir[] = "/data/local/tmp/vktest_XXXXXX";
-    char* dir = mkdtemp(tmpDir);
+    // On device the writable scratch space is /data/local/tmp; the host
+    // test runner points TMPDIR at its build tree.
+    const char* base = getenv("TMPDIR");
+    std::string tmpl = std::string(base ? base : "/data/local/tmp") + "/vktest_XXXXXX";
+    std::vector<char> tmpDir(tmpl.begin(), tmpl.end());
+    tmpDir.push_back('\0');
+    char* dir = mkdtemp(tmpDir.data());
     if (!dir) { GTEST_SKIP() << "cannot create temp dir"; }
 
     // Enable AUTO RUN and save via the settings toggle flow.
