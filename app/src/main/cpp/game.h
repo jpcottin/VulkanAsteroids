@@ -231,6 +231,13 @@ public:
     int  hitsTakenForTest()        const { return hitsTaken_; }
     int  bossHitsTakenForTest()    const { return bossHits_; }
     int  shieldSavesForTest()      const { return shieldSaves_; }
+    int  livesForTest()            const { return lives_; }
+    void setLivesForTest(int n)          { lives_ = n; }
+    long scoreForTest()            const { return score_; }
+    float invulnForTest()          const { return invuln_; }
+    int  goalForTest()             const { return goal_; }
+    void setDodgedForTest(int n)         { dodgedThisLevel_ = n; }
+    void applyShipHitForTest()           { applyShipHit(); }
     bool aiLeftForTest()           const { return aiLeft_; }
     bool aiRightForTest()          const { return aiRight_; }
     bool aiThrustForTest()         const { return aiThrust_; }
