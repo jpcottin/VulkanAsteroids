@@ -779,3 +779,75 @@ TEST(Render, EndScreenScoreFitsTheScreen) {
             << "quad past the screen edge at tx=" << c.tx;
     }
 }
+
+// ── Ship hits ─────────────────────────────────────────────────────────────────
+
+TEST(ShipHit, ShieldAbsorbsTheHitWithoutCostingALife) {
+    Game g;
+    startPlaying(g);
+    const int lives = g.livesForTest();
+    g.activatePowerUpForTest(0);   // 0 = shield
+    ASSERT_TRUE(g.shieldActiveForTest());
+    g.applyShipHitForTest();
+    EXPECT_EQ(g.livesForTest(), lives);
+    EXPECT_FALSE(g.shieldActiveForTest());      // one shield, one save
+    EXPECT_EQ(g.shieldSavesForTest(), 1);
+    EXPECT_EQ(g.hitsTakenForTest(), 0);
+    EXPECT_TRUE(g.isPlayingForTest());
+}
+
+TEST(ShipHit, AHitCostsALifeAndGrantsInvulnerability) {
+    Game g;
+    startPlaying(g);
+    const int lives = g.livesForTest();
+    g.clearInvulnForTest();
+    g.applyShipHitForTest();
+    EXPECT_EQ(g.livesForTest(), lives - 1);
+    EXPECT_EQ(g.hitsTakenForTest(), 1);
+    EXPECT_GT(g.invulnForTest(), 0.0f);
+    EXPECT_TRUE(g.isPlayingForTest());
+}
+
+TEST(ShipHit, TheLastLifeEndsTheGame) {
+    Game g;
+    startPlaying(g);
+    g.setLivesForTest(1);
+    g.applyShipHitForTest();
+    EXPECT_EQ(g.livesForTest(), 0);
+    EXPECT_TRUE(g.isGameOverForTest());
+}
+
+// ── Level clear ───────────────────────────────────────────────────────────────
+
+TEST(LevelClear, DodgingTheGoalClearsTheLevelAndPaysTheBonus) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(3);
+    ASSERT_TRUE(g.isPlayingForTest());
+    const long score = g.scoreForTest();
+    g.setDodgedForTest(g.goalForTest());
+    g.update(1.0f / 60.0f);
+    EXPECT_TRUE(g.isLevelClearForTest());
+    EXPECT_EQ(g.scoreForTest(), score + 100 * 3);
+    EXPECT_EQ(g.asteroidStorageForTest(), 0);  // the field is cleared for the next level
+}
+
+TEST(LevelClear, OneShortOfTheGoalKeepsPlaying) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(3);
+    g.setDodgedForTest(g.goalForTest() - 1);
+    g.update(1.0f / 60.0f);
+    EXPECT_TRUE(g.isPlayingForTest());
+}
+
+TEST(LevelClear, LevelTenIsOnlyClearedByTheBoss) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    g.setDodgedForTest(g.goalForTest());
+    g.update(1.0f / 60.0f);
+    EXPECT_FALSE(g.isLevelClearForTest());
+    EXPECT_TRUE(g.isPlayingForTest());
+}
+
