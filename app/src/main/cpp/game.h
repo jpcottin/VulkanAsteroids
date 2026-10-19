@@ -241,6 +241,7 @@ public:
     bool aiLeftForTest()           const { return aiLeft_; }
     bool aiRightForTest()          const { return aiRight_; }
     bool aiThrustForTest()         const { return aiThrust_; }
+    bool thrustHeldForTest()       const { return thrustHeld(); }
     bool aiFireForTest()           const { return aiFire_; }
     float shipVyForTest()          const { return shipVy_; }
     // Position, velocity and radius of asteroid slot i (false when the slot is dead).

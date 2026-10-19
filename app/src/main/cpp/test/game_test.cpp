@@ -851,3 +851,47 @@ TEST(LevelClear, LevelTenIsOnlyClearedByTheBoss) {
     EXPECT_TRUE(g.isPlayingForTest());
 }
 
+
+// ── App pause ─────────────────────────────────────────────────────────────────
+
+TEST(AppPause, AHumanRoundParksOnSettings) {
+    Game g;
+    startPlaying(g);
+    g.onAppPause();
+    EXPECT_TRUE(g.inSettingsForTest());
+    // BACK returns to the round it came from.
+    g.onPointerDown(0, kSettingsCX, kBackPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_TRUE(g.isPlayingForTest());
+}
+
+TEST(AppPause, AnAutoRunRoundKeepsPlaying) {
+    Game g;
+    startPlaying(g);
+    g.setAutoRunForTest(true);
+    g.onAppPause();
+    EXPECT_TRUE(g.isPlayingForTest());
+}
+
+TEST(AppPause, TheTitleScreenIsLeftAlone) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.onAppPause();
+    EXPECT_TRUE(g.inTitleForTest());
+}
+
+TEST(AppPause, AHeldPointerIsReleased) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, kThrustX, kThrustY);        // a finger on the thrust zone
+    g.update(0.016f);
+    ASSERT_TRUE(g.thrustHeldForTest());
+    g.onAppPause();
+    // Back in the round, the ship must not keep thrusting from a finger that is gone.
+    g.onPointerDown(0, kSettingsCX, kBackPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.isPlayingForTest());
+    EXPECT_FALSE(g.thrustHeldForTest());
+}
