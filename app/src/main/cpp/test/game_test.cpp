@@ -895,3 +895,157 @@ TEST(AppPause, AHeldPointerIsReleased) {
     ASSERT_TRUE(g.isPlayingForTest());
     EXPECT_FALSE(g.thrustHeldForTest());
 }
+
+// ── Timers: power-up duration, combo window, invulnerability ──────────────────
+
+// Advance a round frame by frame (update() clamps a single big dt).
+static void advance(Game& g, float seconds) {
+    for (float t = 0.0f; t < seconds; t += 0.016f) g.update(0.016f);
+}
+
+TEST(Timers, APowerUpWearsOffAfterEightSeconds) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestPowerUp(g.shipX(), g.shipY(), 2);   // speed boost, collected this frame
+    g.update(0.016f);
+    ASSERT_TRUE(g.speedBoostActiveForTest());
+    advance(g, 7.5f);
+    EXPECT_TRUE(g.speedBoostActiveForTest()) << "still inside the 8 s window";
+    advance(g, 1.0f);
+    EXPECT_FALSE(g.speedBoostActiveForTest()) << "past the 8 s window";
+}
+
+TEST(Timers, CollectingTheSamePowerUpAgainRestartsItsClock) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestPowerUp(g.shipX(), g.shipY(), 1);   // spread
+    g.update(0.016f);
+    ASSERT_TRUE(g.spreadActiveForTest());
+    advance(g, 6.0f);
+    ASSERT_TRUE(g.spreadActiveForTest());
+    g.spawnTestPowerUp(g.shipX(), g.shipY(), 1);   // a second spread, 2 s before the first ends
+    g.update(0.016f);
+    advance(g, 6.0f);                               // 12 s after the first pickup
+    EXPECT_TRUE(g.spreadActiveForTest()) << "the second pickup bought a fresh 8 s";
+    advance(g, 3.0f);
+    EXPECT_FALSE(g.spreadActiveForTest());
+}
+
+TEST(Timers, TheComboWindowClosesWithoutAKill) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_EQ(g.combo(), 1);
+    advance(g, 2.0f);                               // longer than the 1.8 s window
+    EXPECT_EQ(g.combo(), 0);
+    // The next kill starts a fresh chain instead of continuing the old one.
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.combo(), 1);
+}
+
+TEST(Timers, AHitBreaksTheCombo) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_EQ(g.combo(), 1);
+    g.applyShipHitForTest();
+    EXPECT_EQ(g.combo(), 0);
+}
+
+TEST(Timers, InvulnerabilityWearsOff) {
+    Game g;
+    startPlaying(g);
+    g.clearInvulnForTest();
+    g.applyShipHitForTest();
+    ASSERT_GT(g.invulnForTest(), 0.0f);
+    advance(g, 1.0f);
+    EXPECT_GT(g.invulnForTest(), 0.0f) << "1.5 s of grace, 1 s in";
+    advance(g, 0.7f);
+    EXPECT_LE(g.invulnForTest(), 0.0f) << "grace over";
+}
+
+// ── Haptic callback ───────────────────────────────────────────────────────────
+
+TEST(Haptic, LosingALifeBuzzes) {
+    Game g;
+    startPlaying(g);
+    int buzzes = 0;
+    g.setHapticCallback([&] { buzzes++; });
+    g.clearInvulnForTest();
+    g.applyShipHitForTest();
+    EXPECT_EQ(buzzes, 1);
+}
+
+TEST(Haptic, AShieldedHitStaysSilent) {
+    Game g;
+    startPlaying(g);
+    int buzzes = 0;
+    g.setHapticCallback([&] { buzzes++; });
+    g.activatePowerUpForTest(0);   // shield
+    g.applyShipHitForTest();
+    EXPECT_EQ(buzzes, 0);
+    EXPECT_FALSE(g.shieldActiveForTest());
+}
+
+TEST(Haptic, NoCallbackIsFine) {
+    Game g;
+    startPlaying(g);
+    g.clearInvulnForTest();
+    g.applyShipHitForTest();       // must not dereference an empty std::function
+    EXPECT_EQ(g.hitsTakenForTest(), 1);
+}
+
+// ── Pointer cancel and idle screens ───────────────────────────────────────────
+
+TEST(Input, CancellingThePointersStopsTheShip) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, kRightX, kMidY);
+    advance(g, 0.2f);
+    const float movedTo = g.shipX();
+    ASSERT_GT(movedTo, 0.0f);
+    g.onPointersCancel();
+    advance(g, 0.2f);
+    EXPECT_FLOAT_EQ(g.shipX(), movedTo);
+}
+
+TEST(Input, CancelDoesNotReviveAFingerThatLiftsLater) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, kRightX, kMidY);
+    g.onPointersCancel();
+    g.onPointerUp(0);               // the stale up event for the cancelled finger
+    const float x0 = g.shipX();
+    advance(g, 0.2f);
+    EXPECT_FLOAT_EQ(g.shipX(), x0);
+}
+
+TEST(IdleScreen, OnlyTheStaticScreensAreIdle) {
+    Game g;
+    g.setViewport(kW, kH);
+    EXPECT_TRUE(g.isIdleScreen()) << "title";
+    startPlaying(g);
+    EXPECT_FALSE(g.isIdleScreen()) << "playing";
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inSettingsForTest());
+    EXPECT_FALSE(g.isIdleScreen()) << "settings overlay animates";
+    g.onPointerDown(0, kSettingsCX, kBackPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.isPlayingForTest());
+    g.setLivesForTest(1);
+    g.applyShipHitForTest();
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_TRUE(g.isIdleScreen()) << "game over";
+}
