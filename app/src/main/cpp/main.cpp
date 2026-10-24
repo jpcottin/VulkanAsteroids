@@ -66,6 +66,7 @@ struct Engine {
     Game         game;
     AudioEngine  audio;
     bool instanceReady = false;
+    int recoveryFailures = 0;
     // The game only simulates while the activity is resumed AND has window
     // focus: a paused activity or one covered by the notification shade / a
     // system dialog keeps its surface, so "surface exists" is not enough.
@@ -105,11 +106,23 @@ static void handle_cmd(android_app* app, int32_t cmd) {
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
             if (app->window && e->instanceReady) {
-                e->renderer.initWindow(app->window);
+                if (!e->renderer.initWindow(app->window) && e->renderer.unsupported()) {
+                    // No physical device / no graphics+present queue: the
+                    // window would stay black forever, same as no instance.
+                    LOGE("Vulkan device unavailable - finishing activity");
+                    ANativeActivity_finish(app->activity);
+                    break;
+                }
+                // Any other failure is retried from the main loop's recovery timer.
                 if (!e->active()) e->audio.pause();   // open silent, start on focus
                 e->audio.init();
                 e->game.setAudioEngine(&e->audio);
                 e->lastTime = now_s();
+            } else if (app->window && !e->instanceReady) {
+                // No usable Vulkan driver: without this the loop blocks in
+                // ALooper_pollOnce(-1) behind a frozen black window forever.
+                LOGE("Vulkan unavailable - finishing activity");
+                ANativeActivity_finish(app->activity);
             }
             break;
         case APP_CMD_TERM_WINDOW:
@@ -212,7 +225,19 @@ void android_main(android_app* app) {
             timeout = 0;  // drain remaining events without blocking
         }
 
-        if (recovering && !engine.renderer.ready()) engine.renderer.tryRecover();
+        if (recovering && !engine.renderer.ready()) {
+            engine.renderer.tryRecover();
+            if (engine.renderer.ready()) {
+                engine.recoveryFailures = 0;
+                engine.lastTime = now_s();
+            } else if (++engine.recoveryFailures >= 20 || engine.renderer.unsupported()) {
+                // About two minutes of rebuild attempts (a wedged driver after
+                // a device loss): give up the same way INIT_WINDOW does.
+                LOGE("Renderer could not be recovered - finishing activity");
+                ANativeActivity_finish(app->activity);
+                engine.recoveryFailures = 0;
+            }
+        }
 
         if (engine.renderer.ready() && (engine.active() || engine.frameOnPause)) {
             double now = now_s();

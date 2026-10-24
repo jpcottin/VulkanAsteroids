@@ -22,6 +22,9 @@ public:
     // blocking until the next window event.
     bool needsRecovery() const { return window_ != nullptr && !swapchainReady_; }
     void tryRecover();
+    // No Vulkan device, or none with a graphics+present queue: recovery is
+    // pointless, the activity should finish instead of showing black forever.
+    bool unsupported() const { return unsupported_; }
     int width() const { return (int)extent_.width; }
     int height() const { return (int)extent_.height; }
     // Rebuild the swapchain when the surface extent no longer matches it (a
@@ -65,6 +68,7 @@ private:
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     uint32_t framesDrawn_ = 0;
     bool firstFramePresented_ = false;   // logged once, the smoke test's capture cue
+    bool unsupported_ = false;
     VkPhysicalDevice phys_ = VK_NULL_HANDLE;
     VkDevice device_ = VK_NULL_HANDLE;
     uint32_t queueFamily_ = 0;

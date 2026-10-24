@@ -160,7 +160,7 @@ bool VkRenderer::ensureDevice() {
 
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(instance_, &count, nullptr);
-    if (count == 0) { LOGE("No Vulkan physical devices"); return false; }
+    if (count == 0) { LOGE("No Vulkan physical devices"); unsupported_ = true; return false; }
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(instance_, &count, devices.data());
 
@@ -181,7 +181,7 @@ bool VkRenderer::ensureDevice() {
         }
         if (phys_ != VK_NULL_HANDLE) break;
     }
-    if (phys_ == VK_NULL_HANDLE) { LOGE("No suitable GPU/queue"); return false; }
+    if (phys_ == VK_NULL_HANDLE) { LOGE("No suitable GPU/queue"); unsupported_ = true; return false; }
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(phys_, &props);
@@ -207,8 +207,13 @@ bool VkRenderer::ensureDevice() {
     VK_CHECK(vkCreateDevice(phys_, &dci, nullptr, &device_));
     vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
 
-    if (!createVertexBuffer()) return false;
-    if (!createSyncAndCommands()) return false;
+    // On any failure past this point, tear the partial device down so a
+    // retry (the recovery timer) starts clean instead of leaking the old
+    // device and its buffers by overwriting the handles every 250 ms.
+    if (!createVertexBuffer() || !createSyncAndCommands()) {
+        destroyDevice();
+        return false;
+    }
 
     // Pipeline layout: one push-constant range shared by both stages.
     VkPushConstantRange pcr{};
@@ -218,7 +223,12 @@ bool VkRenderer::ensureDevice() {
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges = &pcr;
-    VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &pipelineLayout_));
+    VkResult pr = vkCreatePipelineLayout(device_, &plci, nullptr, &pipelineLayout_);
+    if (pr != VK_SUCCESS) {
+        LOGE("vkCreatePipelineLayout failed %d", pr);
+        destroyDevice();
+        return false;
+    }
 
     deviceReady_ = true;
     return true;
@@ -503,6 +513,7 @@ bool VkRenderer::createSwapchain() {
 
     uint32_t fmtCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, surface_, &fmtCount, nullptr);
+    if (fmtCount == 0) return false;   // a surface lost between the two queries
     std::vector<VkSurfaceFormatKHR> formats(fmtCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, surface_, &fmtCount, formats.data());
     VkSurfaceFormatKHR chosen = formats[0];
@@ -715,7 +726,8 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
         if (!swapchainReady_) return;
     }
 
-    vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+    VkResult fr = vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+    if (fr != VK_SUCCESS) { stopRendering("vkWaitForFences", fr); return; }
 
     uint32_t imageIndex = 0;
     VkResult r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
