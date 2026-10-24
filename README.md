@@ -41,16 +41,16 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 
 - **Goal:** clear each level by destroying or dodging enough asteroids.
 - **Progression:** 10 levels, each faster and denser than the last.
-- **Scoring:** +5×level per dodge, +10×level per kill, +25×level per power-up collected, +100×level per cleared level.
-- **Lives:** 3 lives; invulnerability blinks after each hit.
+- **Scoring:** +5×level per dodge, +10×level per kill, +25×level per power-up collected, +100×level per cleared level, +50×level for the boss.
+- **Lives:** 5 lives; invulnerability blinks after each hit, and after a shield save.
 - **HUD:** score (top-left) · lives (top-center) · level (top-right).
 - **Ship banking:** the ship tilts ±20° into the direction of travel.
 - **High scores:** top-5 leaderboard persisted locally; gold/silver/bronze podium on the title screen; gold pulsing score + rank medal on game over when a new record is set.
 - **Asteroid splitting:** large and medium asteroids split into two smaller faster children when shot.
 - **Asteroid variety:** fast (smaller, 1.65×, lateral drift, level 5+) and armored (2 HP, orange ring, level 7+) variants.
 - **Power-ups:** 🔵 Shield (absorbs one hit) · 🟢 Spread shot (3-way fire) · 🟡 Speed boost (1.65× speed) — drop from kills and fall from above; HUD timer bar shows remaining duration.
-- **Combo multiplier:** chain kills within 1.8 s for x2–x4 score bonus; multiplier shown on screen.
-- **Boss fight at level 10:** 6-HP boss with sinusoidal drift and health bar; defeating it wins the game.
+- **Combo multiplier:** chain kills within 1.8 s for x2–x4 score bonus; multiplier shown on screen; the chain ends with the level.
+- **Boss fight at level 10:** 12-HP boss with sinusoidal drift and health bar; defeating it wins the game.
 - **Screen shake** on ship collision; HUD stays stable.
 - **Haptic feedback** (50 ms vibration) on ship hit.
 - **Background music:** procedurally synthesised ambient space track (A-minor pad + bass + arpeggio) starts with each new game.
@@ -106,7 +106,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-83 tests covering ship physics, input zones, bullets, spread shot, speed
+86 tests covering ship physics, input zones, bullets, spread shot, speed
 boost, asteroid splitting, combo multiplier, armored asteroid HP, boss
 spawn, power-up session isolation, power-up pickup scoring, settings state
 machine (gear tap, back button, sound/auto-run toggles, row hit-bounds,
@@ -189,8 +189,8 @@ reports its findings without ever blocking a PR.
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
 | **Auto Run bench** | Builds `game.cpp` with the host compiler and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
-| **Native Tests** | Runs 83 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Host tests** | Builds `game.cpp` and the same 83 Google Test cases with the host compiler and runs them, no emulator | — |
+| **Native Tests** | Runs 86 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Host tests** | Builds `game.cpp` and the same 86 Google Test cases with the host compiler and runs them, no emulator | — |
 | **Smoke Test** | Launches the game on x86\_64 emulators and captures a `screencap` of it as the screenshot artifact, then runs the Android instrumented test, which asserts the activity is RESUMED and that a `UiAutomation` capture is not a black frame, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking preview legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*`; `instrumented-test-report-android-cli-experiment-*` on failure |
 | **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |
