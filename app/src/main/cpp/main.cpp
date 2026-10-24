@@ -11,30 +11,31 @@
 #include "game.h"
 #include "audio.h"
 
-// Trigger a 50 ms haptic pulse on a detached thread so the game loop never blocks.
-static void triggerHaptic(android_app* app) {
-    JavaVM* vm = app->activity->vm;
-    jobject activityRef = app->activity->clazz;
+// Trigger a 50 ms haptic pulse on a detached thread so the game loop never
+// blocks. The pulse thread gets its own global ref (minted on the calling
+// thread while `activity` is valid), so it can never race NativeActivity
+// deleting its activity reference during teardown.
+static void triggerHaptic(JavaVM* vm, JNIEnv* callerEnv, jobject activity) {
+    if (!callerEnv || !activity) return;
+    jobject ref = callerEnv->NewGlobalRef(activity);
+    if (!ref) return;
 
-    std::thread([vm, activityRef]() {
+    std::thread([vm, ref]() {
         JNIEnv* env = nullptr;
         vm->AttachCurrentThread(&env, nullptr);
         if (!env) return;
 
-        jclass  cls        = env->GetObjectClass(activityRef);
+        jclass  cls        = env->GetObjectClass(ref);
         jstring svcStr     = env->NewStringUTF("vibrator");
         jmethodID getSvc   = env->GetMethodID(cls, "getSystemService",
                                               "(Ljava/lang/String;)Ljava/lang/Object;");
-        jobject vibrator   = env->CallObjectMethod(activityRef, getSvc, svcStr);
+        jobject vibrator   = env->CallObjectMethod(ref, getSvc, svcStr);
+        if (env->ExceptionCheck()) { env->ExceptionClear(); vibrator = nullptr; }
         env->DeleteLocalRef(svcStr);
 
         if (vibrator) {
             jclass vibCls = env->GetObjectClass(vibrator);
             jclass veCls  = env->FindClass("android/os/VibrationEffect");
-            // Below API 26 the class does not exist and FindClass leaves a
-            // ClassNotFoundException pending; cleared, or detaching the thread
-            // with it pending takes the process down.
-            if (!veCls) env->ExceptionClear();
             if (veCls) {
                 jmethodID create    = env->GetStaticMethodID(veCls, "createOneShot",
                                                              "(JI)Landroid/os/VibrationEffect;");
@@ -43,19 +44,28 @@ static void triggerHaptic(android_app* app) {
                 if (create && doVibrate) {
                     jobject effect = env->CallStaticObjectMethod(veCls, create,
                                                                  (jlong)50, (jint)-1);
-                    env->CallVoidMethod(vibrator, doVibrate, effect);
-                    // Clear any SecurityException (missing VIBRATE permission) so
-                    // the thread exits cleanly instead of crashing the process.
+                    // Calling further JNI with an exception pending is illegal:
+                    // check after each call that can throw.
+                    if (env->ExceptionCheck()) { env->ExceptionClear(); effect = nullptr; }
+                    if (effect) {
+                        env->CallVoidMethod(vibrator, doVibrate, effect);
+                        // Clear any SecurityException (missing VIBRATE permission) so
+                        // the thread exits cleanly instead of crashing the process.
+                        env->ExceptionClear();
+                        env->DeleteLocalRef(effect);
+                    }
+                } else {
                     env->ExceptionClear();
-                    env->DeleteLocalRef(effect);
                 }
                 env->DeleteLocalRef(veCls);
+            } else {
+                // Below API 26 the class does not exist and FindClass leaves a
+                // ClassNotFoundException pending.
+                env->ExceptionClear();
             }
             env->DeleteLocalRef(vibrator);
         }
-        // Whatever the service lookup or the call left behind: never detach
-        // with an exception pending.
-        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteGlobalRef(ref);
         vm->DetachCurrentThread();
     }).detach();
 }
@@ -201,7 +211,16 @@ void android_main(android_app* app) {
         clock_gettime(CLOCK_REALTIME, &t);
         engine.game.seedRng((uint32_t)t.tv_nsec ^ (uint32_t)t.tv_sec);
     }
-    engine.game.setHapticCallback([app]() { triggerHaptic(app); });
+    // Keep the game thread JNI-attached for its whole life: haptic pulses mint
+    // their per-pulse global refs from a reference we own instead of racing
+    // NativeActivity's own activity ref against teardown.
+    JNIEnv* mainEnv = nullptr;
+    app->activity->vm->AttachCurrentThread(&mainEnv, nullptr);
+    jobject activityRef =
+        mainEnv ? mainEnv->NewGlobalRef(app->activity->clazz) : nullptr;
+    engine.game.setHapticCallback([app, mainEnv, activityRef]() {
+        triggerHaptic(app->activity->vm, mainEnv, activityRef);
+    });
     engine.lastTime = now_s();
 
     std::vector<DrawCmd> cmds;   // reused across frames: no per-frame allocation
@@ -220,6 +239,8 @@ void android_main(android_app* app) {
             if (source) source->process(app, source);
             if (app->destroyRequested) {
                 engine.renderer.cleanup();
+                if (mainEnv && activityRef) mainEnv->DeleteGlobalRef(activityRef);
+                if (mainEnv) app->activity->vm->DetachCurrentThread();
                 return;
             }
             timeout = 0;  // drain remaining events without blocking
