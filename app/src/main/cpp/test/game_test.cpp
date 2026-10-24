@@ -4,6 +4,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <unistd.h>
 #include "game.h"
 
 // Viewport used for all tests: portrait phone dimensions.
@@ -1048,4 +1051,165 @@ TEST(IdleScreen, OnlyTheStaticScreensAreIdle) {
     g.applyShipHitForTest();
     ASSERT_TRUE(g.isGameOverForTest());
     EXPECT_TRUE(g.isIdleScreen()) << "game over";
+}
+
+// ── High-score table ──────────────────────────────────────────────────────────
+// A run ends when the last life goes; that is where the table is updated and
+// (with a data path set) written to disk.
+
+static void endRunWith(Game& g, long score, int level = 1) {
+    g.startLevelForTest(level);          // a fresh run on that level
+    g.setScoreForTest(score);
+    g.setLivesForTest(1);
+    g.applyShipHitForTest();
+    ASSERT_TRUE(g.isGameOverForTest());
+}
+
+// A private directory for one test's highscores.bin; "" when none can be made.
+static std::string scratchDir() {
+    const char* base = getenv("TMPDIR");
+    std::string tmpl = std::string(base && base[0] ? base : "/data/local/tmp") + "/vkhs_XXXXXX";
+    std::vector<char> buf(tmpl.begin(), tmpl.end());
+    buf.push_back('\0');
+    char* d = mkdtemp(buf.data());
+    return d ? std::string(d) : std::string();
+}
+
+static void writeBytes(const std::string& path, const void* data, size_t n) {
+    FILE* f = fopen(path.c_str(), "wb");
+    ASSERT_TRUE(f != nullptr);
+    ASSERT_EQ(fwrite(data, 1, n, f), n);
+    fclose(f);
+}
+
+static void removeScratch(const std::string& dir) {
+    remove((dir + "/highscores.bin").c_str());
+    rmdir(dir.c_str());
+}
+
+TEST(HighScores, TableOrdersDisplacesAndCaps) {
+    Game g;
+    g.setViewport(kW, kH);               // no data path: the table lives in memory
+    const long runs[6] = {300, 100, 500, 200, 400, 250};
+    for (long r : runs) endRunWith(g, r);
+    EXPECT_EQ(g.highScoreForTest(0), 500);
+    EXPECT_EQ(g.highScoreForTest(1), 400);
+    EXPECT_EQ(g.highScoreForTest(2), 300);
+    EXPECT_EQ(g.highScoreForTest(3), 250);
+    EXPECT_EQ(g.highScoreForTest(4), 200);     // the 100 was displaced off
+    EXPECT_EQ(g.newHighScoreRankForTest(), 3); // the last run (250) landed fourth
+}
+
+TEST(HighScores, ARunKeepsItsLevel) {
+    Game g;
+    g.setViewport(kW, kH);
+    endRunWith(g, 800, 4);
+    EXPECT_EQ(g.highScoreForTest(0), 800);
+    EXPECT_EQ(g.highScoreLevelForTest(0), 4);
+    EXPECT_EQ(g.newHighScoreRankForTest(), 0);
+}
+
+TEST(HighScores, ATieDoesNotDisplaceTheHolder) {
+    Game g;
+    g.setViewport(kW, kH);
+    endRunWith(g, 500, 1);
+    endRunWith(g, 500, 7);                     // same score, later and on a higher level
+    EXPECT_EQ(g.highScoreLevelForTest(0), 1);  // the first holder keeps the top row
+    EXPECT_EQ(g.highScoreForTest(1), 500);
+    EXPECT_EQ(g.highScoreLevelForTest(1), 7);
+    EXPECT_EQ(g.newHighScoreRankForTest(), 1);
+}
+
+TEST(HighScores, AZeroRunIsNotRecorded) {
+    Game g;
+    g.setViewport(kW, kH);
+    endRunWith(g, 0);
+    EXPECT_EQ(g.highScoreForTest(0), 0);
+    EXPECT_EQ(g.newHighScoreRankForTest(), -1);
+}
+
+TEST(HighScores, ANewGameKeepsTheTableAndClearsTheRank) {
+    Game g;
+    g.setViewport(kW, kH);
+    endRunWith(g, 900, 2);
+    ASSERT_EQ(g.newHighScoreRankForTest(), 0);
+    g.triggerNewGameForTest();
+    EXPECT_EQ(g.highScoreForTest(0), 900);
+    EXPECT_EQ(g.highScoreLevelForTest(0), 2);
+    EXPECT_EQ(g.newHighScoreRankForTest(), -1);
+}
+
+TEST(HighScores, SavedOnGameOverAndReloaded) {
+    std::string dir = scratchDir();
+    if (dir.empty()) GTEST_SKIP() << "cannot create temp dir";
+    {
+        Game g;
+        g.setViewport(kW, kH);
+        g.setDataPath(dir.c_str());
+        endRunWith(g, 1234, 3);                // game over -> table -> disk
+    }
+    {
+        Game g;
+        g.setViewport(kW, kH);
+        g.setDataPath(dir.c_str());
+        EXPECT_EQ(g.highScoreForTest(0), 1234);
+        EXPECT_EQ(g.highScoreLevelForTest(0), 3);
+        EXPECT_EQ(g.highScoreForTest(1), 0);
+        EXPECT_EQ(g.newHighScoreRankForTest(), -1);   // loading is not a new record
+    }
+    removeScratch(dir);
+}
+
+// The loader must ignore a file it cannot trust and keep the in-memory table.
+// On disk: uint32 magic "ASTR", uint32 count, then kMaxScores x {int64 score, int32 level, pad}.
+static constexpr uint32_t kFileMagic = 0x41535452u;
+static constexpr size_t   kFileEntry = 16;
+static constexpr size_t   kFileSize  = 8 + kFileEntry * Game::kMaxScoresForTest;
+
+TEST(HighScores, FileWithWrongMagicIsIgnored) {
+    std::string dir = scratchDir();
+    if (dir.empty()) GTEST_SKIP() << "cannot create temp dir";
+    unsigned char buf[kFileSize] = {};
+    uint32_t magic = 0x454B4146u, count = Game::kMaxScoresForTest;   // "FAKE"
+    memcpy(buf, &magic, 4); memcpy(buf + 4, &count, 4);
+    for (int i = 0; i < Game::kMaxScoresForTest; i++) { int64_t s = 1000 * (i + 1); memcpy(buf + 8 + kFileEntry * i, &s, 8); }
+    writeBytes(dir + "/highscores.bin", buf, sizeof(buf));
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir.c_str());
+    for (int i = 0; i < Game::kMaxScoresForTest; i++) EXPECT_EQ(g.highScoreForTest(i), 0) << "entry " << i;
+    removeScratch(dir);
+}
+
+TEST(HighScores, TruncatedFileIsIgnored) {
+    std::string dir = scratchDir();
+    if (dir.empty()) GTEST_SKIP() << "cannot create temp dir";
+    // The right magic but only part of the header: the record read fails.
+    unsigned char buf[5] = {};
+    memcpy(buf, &kFileMagic, 4); buf[4] = 1;
+    writeBytes(dir + "/highscores.bin", buf, sizeof(buf));
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir.c_str());
+    for (int i = 0; i < Game::kMaxScoresForTest; i++) EXPECT_EQ(g.highScoreForTest(i), 0) << "entry " << i;
+    removeScratch(dir);
+}
+
+TEST(HighScores, OversizedCountIsClampedToTheTable) {
+    std::string dir = scratchDir();
+    if (dir.empty()) GTEST_SKIP() << "cannot create temp dir";
+    // A valid record whose count claims far more entries than the table holds.
+    unsigned char buf[kFileSize] = {};
+    uint32_t count = 1000;
+    memcpy(buf, &kFileMagic, 4); memcpy(buf + 4, &count, 4);
+    for (int i = 0; i < Game::kMaxScoresForTest; i++) {
+        int64_t s = 500 - 100 * i; int32_t lvl = i + 1;
+        memcpy(buf + 8 + kFileEntry * i, &s, 8); memcpy(buf + 16 + kFileEntry * i, &lvl, 4);
+    }
+    writeBytes(dir + "/highscores.bin", buf, sizeof(buf));
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir.c_str());
+    for (int i = 0; i < Game::kMaxScoresForTest; i++) {
+        EXPECT_EQ(g.highScoreForTest(i), 500 - 100 * i) << "entry " << i;
+        EXPECT_EQ(g.highScoreLevelForTest(i), i + 1) << "entry " << i;
+    }
+    removeScratch(dir);
 }
