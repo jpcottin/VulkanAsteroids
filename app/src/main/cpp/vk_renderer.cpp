@@ -633,7 +633,10 @@ void VkRenderer::recreateSwapchain(bool surfaceToo) {
 
 void VkRenderer::tryRecover() {
     if (!window_ || swapchainReady_) return;
-    if (deviceBroken_) {
+    // No device yet (the first setup failed: no Vulkan device, no suitable
+    // queue) is handled like a broken one: a swapchain cannot be rebuilt on a
+    // null physical device, so go through the full window setup again.
+    if (deviceBroken_ || !deviceReady_) {
         destroySwapchain();
         destroySurface();
         if (!createSurface()) return;
@@ -746,9 +749,14 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     pi.pImageIndices = &imageIndex;
     r = vkQueuePresentKHR(queue_, &pi);
     frame_ = (frame_ + 1) % kFramesInFlight;
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_SURFACE_LOST_KHR) {
+    // SUBOPTIMAL is a presented frame. Android reports it whenever the window's
+    // transform hint differs from the swapchain's preTransform, which with the
+    // identity transform chosen above is every frame on a landscape-native
+    // panel; rebuilding on it (as acquire already does not) would rebuild the
+    // swapchain every frame and never converge.
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_ERROR_SURFACE_LOST_KHR) {
         recreateSwapchain(r == VK_ERROR_SURFACE_LOST_KHR);
-    } else if (r != VK_SUCCESS) {
+    } else if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         stopRendering("vkQueuePresentKHR", r);
     }
 }
