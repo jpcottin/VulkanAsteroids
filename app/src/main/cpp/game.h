@@ -220,6 +220,10 @@ public:
     // Total asteroid slots held, dead ones included (leak regression test).
     int  asteroidStorageForTest()  const { return (int)asteroids_.size(); }
     long topHighScoreForTest()     const { return highScores_[0].score; }
+    long highScoreForTest(int i)      const { return highScores_[i].score; }
+    int  highScoreLevelForTest(int i) const { return highScores_[i].level; }
+    int  newHighScoreRankForTest()    const { return newHighScoreRank_; }
+    static constexpr int kMaxScoresForTest = kMaxScores;
     // Auto Run bench accessors (test/autorun_bench.cpp).
     void seedRngForTest(uint32_t s)      { rng_ = s ? s : 1u; }
     int  levelForTest()            const { return level_; }
