@@ -168,6 +168,13 @@ void android_main(android_app* app) {
 
     engine.instanceReady = engine.renderer.initInstance();
     engine.game.setDataPath(app->activity->internalDataPath);
+    {
+        // A different sky each launch: the title stars and the first rocks
+        // come from this generator, which otherwise starts from one constant.
+        struct timespec t{};
+        clock_gettime(CLOCK_REALTIME, &t);
+        engine.game.seedRng((uint32_t)t.tv_nsec ^ (uint32_t)t.tv_sec);
+    }
     engine.game.setHapticCallback([app]() { triggerHaptic(app); });
     engine.lastTime = now_s();
 

@@ -159,6 +159,8 @@ private:
 public:
     void setAudioEngine(AudioEngine* a) { audio_ = a; }
     void setDataPath(const char* path);
+    /** Seed the game's generator; a launch should not show the same sky every time. */
+    void seedRng(uint32_t s) { rng_ = s ? s : 1u; }
     void setHapticCallback(std::function<void()> fn) { haptic_ = std::move(fn); }
 
     // --- test / debug accessors ---
@@ -225,7 +227,9 @@ public:
     int  newHighScoreRankForTest()    const { return newHighScoreRank_; }
     static constexpr int kMaxScoresForTest = kMaxScores;
     // Auto Run bench accessors (test/autorun_bench.cpp).
-    void seedRngForTest(uint32_t s)      { rng_ = s ? s : 1u; }
+    void seedRngForTest(uint32_t s)      { seedRng(s); }
+    float starXForTest(int i)      const { return stars_[i].x; }
+    float animTimeForTest()        const { return animTime_; }
     int  levelForTest()            const { return level_; }
     bool isPlayingForTest()        const { return state_ == PLAYING; }
     bool isLevelClearForTest()     const { return state_ == LEVEL_CLEAR; }
