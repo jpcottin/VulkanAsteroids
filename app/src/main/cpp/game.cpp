@@ -328,6 +328,9 @@ void Game::startLevel(int level) {
     spawnInterval_ = levelSpawn(level_);
     goal_ = levelGoal(level_);
     dodgedThisLevel_ = 0;
+    // The chain ends with the level: the kill that cleared it must not make
+    // the first kill of the next one a x2.
+    comboCount_ = 0; comboTimer_ = 0.0f; comboDisplayTimer_ = 0.0f;
     spawnTimer_ = 0.5f;
     shipX_ = 0.0f;
     shipY_ = 0.80f;
@@ -599,6 +602,9 @@ void Game::applyShipHit() {
         shieldActive_ = false; shieldTimer_ = 0.0f;
         shieldSaves_++;
         shakeAmt_ = 0.5f;
+        // The save buys the same breather as a hit: the rock (or the boss)
+        // that spent the shield is still overlapping the ship next frame.
+        invuln_ = 1.0f;
         return;
     }
     lives_--;

@@ -310,6 +310,28 @@ TEST(Combo, KillsInWindowIncrementCombo) {
     }
 }
 
+TEST(Combo, TheChainDoesNotCarryIntoTheNextLevel) {
+    Game g;
+    startPlaying(g);
+    // One dodge short of the goal: the next kill clears the level.
+    g.setDodgedForTest(g.goalForTest() - 1);
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    ASSERT_EQ(g.combo(), 1);
+    for (int i = 0; i < 200 && !g.isPlayingForTest(); i++) g.update(0.016f);   // the interlude
+    ASSERT_TRUE(g.isPlayingForTest());
+    ASSERT_EQ(g.levelForTest(), 2);
+    // Straight into the first kill of the new level: x1, not a chained x2.
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.06f, 2);
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.combo(), 1);
+}
+
 TEST(Combo, ComboScoreHigherThanBaseScore) {
     // With combo active, the second kill within the window yields more total score.
     Game g1, g2;
@@ -376,6 +398,27 @@ TEST(Boss, HasCorrectInitialHP) {
     g.setViewport(kW, kH);
     g.startLevelForTest(10);
     EXPECT_EQ(g.bossHpForTest(), 12);
+}
+
+TEST(Boss, AShieldSaveAgainstTheBossCostsNoLifeOnTheNextFrame) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    ASSERT_TRUE(g.bossAliveForTest());
+    const int lives = g.livesForTest();
+    // Keep a shield up and no spawn protection until the boss touches the ship.
+    int frames = 0;
+    while (g.shieldSavesForTest() == 0 && frames++ < 60 * 60) {
+        if (!g.shieldActiveForTest()) g.activatePowerUpForTest(0);
+        g.clearInvulnForTest();
+        g.update(0.016f);
+    }
+    ASSERT_EQ(g.shieldSavesForTest(), 1);
+    ASSERT_EQ(g.livesForTest(), lives);
+    // The boss is still overlapping the ship: the save must have bought a breather.
+    for (int i = 0; i < 3; i++) g.update(0.016f);
+    EXPECT_EQ(g.livesForTest(), lives);
+    EXPECT_EQ(g.hitsTakenForTest(), 0);
 }
 
 TEST(Boss, DefeatingBossWinsTheGame) {
@@ -784,6 +827,20 @@ TEST(Render, EndScreenScoreFitsTheScreen) {
 }
 
 // ── Ship hits ─────────────────────────────────────────────────────────────────
+
+TEST(ShipHit, TwoRocksInOneFrameSpendTheShieldAndNothingElse) {
+    Game g;
+    startPlaying(g);
+    const int lives = g.livesForTest();
+    g.activatePowerUpForTest(0);   // shield
+    g.clearInvulnForTest();
+    g.spawnTestAsteroid(g.shipX(), g.shipY(), 0.05f, 2);
+    g.spawnTestAsteroid(g.shipX(), g.shipY(), 0.05f, 2);
+    g.update(0.016f);
+    EXPECT_EQ(g.shieldSavesForTest(), 1);
+    EXPECT_EQ(g.livesForTest(), lives);
+    EXPECT_EQ(g.hitsTakenForTest(), 0);
+}
 
 TEST(ShipHit, ShieldAbsorbsTheHitWithoutCostingALife) {
     Game g;
