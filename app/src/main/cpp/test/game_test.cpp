@@ -32,6 +32,14 @@ static void startPlaying(Game& g) {
 
 // ── Initial state ──────────────────────────────────────────────────────────────
 
+TEST(InitialState, DifferentSeedsGiveDifferentSkies) {
+    Game a, b, c;
+    a.seedRng(1u); b.seedRng(2u); c.seedRng(1u);
+    a.setViewport(kW, kH); b.setViewport(kW, kH); c.setViewport(kW, kH);
+    EXPECT_NE(a.starXForTest(0), b.starXForTest(0));
+    EXPECT_FLOAT_EQ(a.starXForTest(0), c.starXForTest(0));   // the same seed, the same sky
+}
+
 TEST(InitialState, LivesAndScore) {
     Game g;
     startPlaying(g);
@@ -961,6 +969,16 @@ TEST(AppPause, AHeldPointerIsReleased) {
 // Advance a round frame by frame (update() clamps a single big dt).
 static void advance(Game& g, float seconds) {
     for (float t = 0.0f; t < seconds; t += 0.016f) g.update(0.016f);
+}
+
+TEST(Timers, TheAnimationClockStaysBounded) {
+    // Hours on the title screen must not run the pulse clock into float territory
+    // where a frame's worth of time no longer registers.
+    Game g;
+    g.setViewport(kW, kH);
+    for (int i = 0; i < 200000; i++) g.update(0.05f);   // 10000 s
+    EXPECT_GE(g.animTimeForTest(), 0.0f);
+    EXPECT_LT(g.animTimeForTest(), 6300.0f);
 }
 
 TEST(Timers, APowerUpWearsOffAfterEightSeconds) {

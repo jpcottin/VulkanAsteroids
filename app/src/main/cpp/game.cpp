@@ -448,9 +448,15 @@ void Game::spawnPowerUp(float x, float y) {
     powerUps_.push_back(p);
 }
 
+// The animation clock wraps every 1000 turns of 2π: every sinf(animTime_ * k)
+// with an integer k continues seamlessly, and a float that only grew would
+// lose the per-frame step after a day on the title screen.
+static constexpr float kAnimWrap = 6283.1853f;
+
 void Game::update(float dt) {
     if (dt > 0.05f) dt = 0.05f;   // clamp huge hitches
     animTime_ += dt;
+    if (animTime_ > kAnimWrap) animTime_ -= kAnimWrap;
 
     // Particles and explosions animate in all states.
     const float drag = expf(kParticleDragRate * dt);
