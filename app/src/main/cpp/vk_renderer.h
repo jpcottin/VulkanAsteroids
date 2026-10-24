@@ -64,6 +64,7 @@ private:
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     uint32_t framesDrawn_ = 0;
+    bool firstFramePresented_ = false;   // logged once, the smoke test's capture cue
     VkPhysicalDevice phys_ = VK_NULL_HANDLE;
     VkDevice device_ = VK_NULL_HANDLE;
     uint32_t queueFamily_ = 0;
