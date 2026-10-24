@@ -759,6 +759,14 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     pi.pSwapchains = &swapchain_;
     pi.pImageIndices = &imageIndex;
     r = vkQueuePresentKHR(queue_, &pi);
+    if (r == VK_SUCCESS && !firstFramePresented_) {
+        // A frame has actually reached the screen, not just a created
+        // swapchain. The instrumented smoke test waits for this line before
+        // grabbing its screenshot, so slow software rasterizers get a real
+        // frame instead of the cleared surface.
+        firstFramePresented_ = true;
+        LOGI("First frame presented");
+    }
     frame_ = (frame_ + 1) % kFramesInFlight;
     // SUBOPTIMAL is a presented frame. Android reports it whenever the window's
     // transform hint differs from the swapchain's preTransform, which with the
