@@ -121,6 +121,12 @@ static void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_PAUSE:        e->resumed = false; break;
         case APP_CMD_GAINED_FOCUS: e->focused = true;  break;
         case APP_CMD_LOST_FOCUS:   e->focused = false; break;
+        case APP_CMD_WINDOW_RESIZED:
+        case APP_CMD_CONFIG_CHANGED:
+            // A fold, a split-screen drag or a free-form resize keeps the surface
+            // (configChanges in the manifest) and only sends these.
+            e->renderer.onWindowResized();
+            break;
         default:
             break;
     }
