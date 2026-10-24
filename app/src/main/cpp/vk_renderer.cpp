@@ -703,6 +703,17 @@ void VkRenderer::recordCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex,
 
 void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3]) {
     if (!swapchainReady_) return;
+    // A fold, a split-screen drag or a free-form resize changes the surface
+    // under a live swapchain (configChanges keeps the window), and the
+    // compositor would stretch the stale-size images onto the new panel while
+    // touches arrive in the new pixels. The resize command fires before the
+    // surface reports the new size and the loader never returns OUT_OF_DATE
+    // for it, so poll the extent at ~5 Hz (the caps query is a host round
+    // trip on an emulator; per frame would be too dear).
+    if (framesDrawn_++ % 12 == 0) {
+        onWindowResized();
+        if (!swapchainReady_) return;
+    }
 
     vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
 
@@ -758,6 +769,22 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
         recreateSwapchain(r == VK_ERROR_SURFACE_LOST_KHR);
     } else if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         stopRendering("vkQueuePresentKHR", r);
+    }
+}
+
+void VkRenderer::onWindowResized() {
+    if (!swapchainReady_ || !window_) return;
+    VkSurfaceCapabilitiesKHR caps{};
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps) != VK_SUCCESS) return;
+    VkExtent2D cur = caps.currentExtent;
+    if (cur.width == 0xFFFFFFFF) {
+        cur.width  = (uint32_t)ANativeWindow_getWidth(window_);
+        cur.height = (uint32_t)ANativeWindow_getHeight(window_);
+    }
+    if (cur.width == 0 || cur.height == 0) return;
+    if (cur.width != extent_.width || cur.height != extent_.height) {
+        LOGI("window resized %ux%u -> %ux%u", extent_.width, extent_.height, cur.width, cur.height);
+        recreateSwapchain(false);
     }
 }
 

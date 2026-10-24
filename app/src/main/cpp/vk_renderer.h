@@ -24,6 +24,11 @@ public:
     void tryRecover();
     int width() const { return (int)extent_.width; }
     int height() const { return (int)extent_.height; }
+    // Rebuild the swapchain when the surface extent no longer matches it (a
+    // free-form resize, fold or split screen under a live window). Called on
+    // the resize command and polled from drawFrame, since the command can
+    // arrive before the surface reports its new size.
+    void onWindowResized();
 
     void drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3]);
 
@@ -58,6 +63,7 @@ private:
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
+    uint32_t framesDrawn_ = 0;
     VkPhysicalDevice phys_ = VK_NULL_HANDLE;
     VkDevice device_ = VK_NULL_HANDLE;
     uint32_t queueFamily_ = 0;

@@ -348,7 +348,10 @@ void Game::startLevel(int level) {
     // Power-up state intentionally NOT reset — bonuses carry across levels.
     powerUpSpawnTimer_ = 12.0f;
     shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f;
-    if (level_ == 10) spawnBoss();
+    if (level_ == 10) {
+        spawnBoss();
+        spawnTimer_ = spawnInterval_;   // the timer armed above would still drop one regular rock
+    }
     state_ = PLAYING;
 }
 
@@ -566,6 +569,17 @@ void Game::update(float dt) {
             if (tapped && stateTimer_ > 0.6f) {
                 state_ = TITLE;
                 asteroids_.clear();
+                // Nothing of the round outlives it on the title: bolts and
+                // power-ups would be drawn frozen, the boss is drawn whenever
+                // it is alive, a leftover invuln_ makes the title ship blink
+                // forever, and a boss-level spawn timer (~1000 s) would keep
+                // the ambient rocks away for a quarter of an hour.
+                bullets_.clear();
+                powerUps_.clear();
+                boss_ = {}; bossActive_ = false;
+                invuln_ = 0.0f;
+                shieldActive_ = spreadActive_ = speedBoostActive_ = false;
+                spawnTimer_ = 0.5f;
                 if (audio_) audio_->setMusicEnabled(false);
             }
             break;
@@ -629,6 +643,7 @@ void Game::applyShipHit() {
     if (lives_ <= 0) {
         if (audio_) audio_->setThrust(false);
         state_ = GAME_OVER; stateTimer_ = 0.0f;
+        spawnTimer_ = 0.9f;   // ambient rocks on the game-over screen, even after the boss level
         checkHighScore();
     }
 }
@@ -764,9 +779,22 @@ void Game::updateBullets(float dt) {
 
     for (auto& b : bullets_) {
         if (!b.alive) continue;
+        const float pbx = b.x, pby = b.y;   // where the bullet was this frame
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         b.life -= dt;
+        // A bullet covers 0.047 world units per 60 Hz frame (0.14 at the 50 ms
+        // clamp) and a small rock's hit chord is about 0.05: test the step it
+        // took, in the rock's frame, not just where it landed, or it steps
+        // right over the rock.
+        auto sweptHit = [&](float cx, float cy, float cvx, float cvy, float R) {
+            float x0 = pbx - (cx - cvx * dt), y0 = pby - (cy - cvy * dt);
+            float x1 = b.x - cx,              y1 = b.y - cy;
+            float ddx = x1 - x0, ddy = y1 - y0, len2 = ddx * ddx + ddy * ddy;
+            float t = len2 > 0.0f ? std::clamp(-(x0 * ddx + y0 * ddy) / len2, 0.0f, 1.0f) : 0.0f;
+            float px = x0 + ddx * t, py = y0 + ddy * t;
+            return px * px + py * py < R * R;
+        };
         if (b.x < -asp_ - 0.1f || b.x > asp_ + 0.1f || b.y < -1.15f || b.life <= 0.0f) {
             b.alive = false; bulletsLost_++; continue;
         }
@@ -803,8 +831,7 @@ void Game::updateBullets(float dt) {
         // Bullet vs asteroids
         for (auto& a : asteroids_) {
             if (!a.alive) continue;
-            float dx = b.x - a.x, dy = b.y - a.y;
-            if (dx * dx + dy * dy < (a.r + 0.012f) * (a.r + 0.012f)) {
+            if (sweptHit(a.x, a.y, a.vx, a.vy, a.r + 0.012f)) {
                 b.alive = false;
                 a.hp--;
                 if (a.hp > 0) {

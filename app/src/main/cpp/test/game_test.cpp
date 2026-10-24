@@ -193,6 +193,31 @@ TEST(Bullets, BulletsExpireOffScreen) {
     EXPECT_EQ(g.bulletCount(), 0);
 }
 
+TEST(Bullets, AHitchyFrameDoesNotStepOverASmallRock) {
+    Game g;
+    startPlaying(g);
+    // A gen-2 rock straight above the gun. At the 50 ms dt clamp a bullet moves
+    // 0.14 per frame; this rock's 0.054 hit chord sits between two samples.
+    g.spawnTestAsteroid(g.shipX(), 0.51f, 0.015f, 2);
+    g.onPointerDown(0, kFireX, kFireY); g.update(0.05f); g.onPointerUp(0);
+    ASSERT_EQ(g.bulletCount(), 1);
+    for (int i = 0; i < 4; i++) g.update(0.05f);   // the bullet is long past the rock
+    EXPECT_EQ(g.killsForTest(), 1);
+    EXPECT_EQ(g.asteroidCount(), 0);
+}
+
+TEST(Bullets, ASixtyHertzFrameDoesNotStepOverAFallingSmallRock) {
+    Game g;
+    startPlaying(g);
+    // Level-9 fall speed, gen-2 child of a 0.05 rock: 0.067 per frame against a 0.054 chord.
+    g.spawnTestAsteroid(g.shipX(), 0.2178f, 0.015f, 2, Game::AT_NORMAL, 1, 0.0f, 1.2f);
+    g.onPointerDown(0, kFireX, kFireY); g.update(1.0f / 60.0f); g.onPointerUp(0);
+    ASSERT_EQ(g.bulletCount(), 1);
+    for (int i = 0; i < 12; i++) g.update(1.0f / 60.0f);
+    EXPECT_EQ(g.killsForTest(), 1);
+    EXPECT_EQ(g.asteroidCount(), 0);
+}
+
 // ── Spread shot ────────────────────────────────────────────────────────────────
 
 TEST(SpreadShot, NormalFireSpawnsOneBullet) {
@@ -447,6 +472,14 @@ TEST(Boss, DefeatingBossWinsTheGame) {
     EXPECT_EQ(g.topHighScoreForTest(), g.score());
 }
 
+TEST(Boss, NoRegularRockSpawnsOnTheBossLevel) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    runFor(g, 2.0f);
+    EXPECT_EQ(g.asteroidCount(), 0);
+}
+
 // ── Title screen ──────────────────────────────────────────────────────────────
 
 TEST(TitleScreen, DoesNotAccumulateDeadAsteroids) {
@@ -457,6 +490,23 @@ TEST(TitleScreen, DoesNotAccumulateDeadAsteroids) {
     runFor(g, 60.0f);  // one idle minute
     EXPECT_EQ(g.asteroidStorageForTest(), g.asteroidCount());
     EXPECT_LT(g.asteroidStorageForTest(), 12);   // ~2.5 s to cross, one every 0.8 s
+}
+
+TEST(TitleScreen, AmbientRocksComeBackAfterABossRun) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);                   // spawnInterval_ is 999 on the boss level
+    runFor(g, 1.0f);
+    g.setLivesForTest(1);
+    g.applyShipHitForTest();
+    ASSERT_TRUE(g.isGameOverForTest());
+    runFor(g, 1.0f);
+    g.onPointerDown(0, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inTitleForTest());
+    runFor(g, 5.0f);                           // the title spawns a rock every 0.8 s
+    EXPECT_GT(g.asteroidCount(), 0);
 }
 
 // ── Game over ─────────────────────────────────────────────────────────────────
@@ -477,6 +527,25 @@ TEST(GameOver, HighScoreMatchesFinalScore) {
     }
     ASSERT_TRUE(g.isGameOverForTest());
     EXPECT_EQ(g.topHighScoreForTest(), g.score());
+}
+
+TEST(GameOver, ReturningToTheTitleClearsTheRound) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    g.onPointerDown(0, kFireX, kFireY); g.update(0.016f); g.onPointerUp(0);   // a bolt in flight
+    ASSERT_GT(g.bulletCount(), 0);
+    g.setLivesForTest(1);
+    g.applyShipHitForTest();                   // the boss round ends
+    ASSERT_TRUE(g.isGameOverForTest());
+    runFor(g, 1.0f);
+    g.onPointerDown(0, kW * 0.5f, kH * 0.5f);  // back to the title
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inTitleForTest());
+    EXPECT_FALSE(g.bossAliveForTest());        // drawn whenever alive, in any state
+    EXPECT_EQ(g.bulletCount(), 0);
+    EXPECT_FLOAT_EQ(g.invulnForTest(), 0.0f);  // the title ship would blink forever
 }
 
 // ── Power-up session isolation ─────────────────────────────────────────────────
