@@ -31,6 +31,10 @@ static void triggerHaptic(android_app* app) {
         if (vibrator) {
             jclass vibCls = env->GetObjectClass(vibrator);
             jclass veCls  = env->FindClass("android/os/VibrationEffect");
+            // Below API 26 the class does not exist and FindClass leaves a
+            // ClassNotFoundException pending; cleared, or detaching the thread
+            // with it pending takes the process down.
+            if (!veCls) env->ExceptionClear();
             if (veCls) {
                 jmethodID create    = env->GetStaticMethodID(veCls, "createOneShot",
                                                              "(JI)Landroid/os/VibrationEffect;");
@@ -49,6 +53,9 @@ static void triggerHaptic(android_app* app) {
             }
             env->DeleteLocalRef(vibrator);
         }
+        // Whatever the service lookup or the call left behind: never detach
+        // with an exception pending.
+        if (env->ExceptionCheck()) env->ExceptionClear();
         vm->DetachCurrentThread();
     }).detach();
 }
