@@ -208,7 +208,7 @@ boot_and_play() {
   RUN_PID="$(A shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
   echo "RUN $N app pid after boot/restore: ${RUN_PID:-none}"
   echo "cycle $N: ${RUN_PID:-none}" >> "$OUT/pids.txt"
-  A shell am start -n "$PKG/android.app.NativeActivity" >/dev/null 2>&1 || true
+  A shell am start -n "$PKG/com.jpcottin.vulkanasteroids.GameActivity" >/dev/null 2>&1 || true
   for _ in $(seq 1 30); do
     A shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanasteroids" && break
     sleep 1

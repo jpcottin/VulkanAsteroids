@@ -94,7 +94,7 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 
 # Install and launch (physical device or emulator)
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity
+adb shell am start -n com.jpcottin.vulkanasteroids/.GameActivity
 
 # Or use the Android CLI
 android run --apks app/build/outputs/apk/debug/app-debug.apk
@@ -170,7 +170,7 @@ length of a won campaign):
 
 ### Instrumented smoke test
 
-Launches the `NativeActivity` on a connected device, waits 4 s for
+Launches the game activity on a connected device, polls the Vulkan log for
 Vulkan to initialise, asserts the activity is still `RESUMED` and that a
 `UiAutomation` screenshot of it is not a black frame:
 

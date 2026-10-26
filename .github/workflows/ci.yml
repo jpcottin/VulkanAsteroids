@@ -277,7 +277,7 @@ jobs:
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
-            adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity
+            adb shell am start -n com.jpcottin.vulkanasteroids/.GameActivity
             for i in $(seq 1 15); do adb shell dumpsys window windows | grep -q "com.jpcottin.vulkanasteroids" && break; sleep 1; done || true
             sleep 4
             adb exec-out screencap -p > screenshot.png || true
@@ -442,7 +442,7 @@ jobs:
           adb install -r app/build/outputs/apk/debug/app-debug.apk || true
           adb shell input keyevent KEYCODE_WAKEUP || true
           adb shell wm dismiss-keyguard || true
-          adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity || true
+          adb shell am start -n com.jpcottin.vulkanasteroids/.GameActivity || true
           for _ in $(seq 1 15); do adb shell dumpsys window windows | grep -q "com.jpcottin.vulkanasteroids" && break; sleep 1; done || true
           sleep 4
           adb exec-out screencap -p > screenshot.png || true
@@ -574,7 +574,7 @@ jobs:
           adb install -r app/build/outputs/apk/debug/app-debug.apk || true
           adb shell input keyevent KEYCODE_WAKEUP || true
           adb shell wm dismiss-keyguard || true
-          adb shell am start -n com.jpcottin.vulkanasteroids/android.app.NativeActivity || true
+          adb shell am start -n com.jpcottin.vulkanasteroids/.GameActivity || true
           for _ in $(seq 1 15); do adb shell dumpsys window windows | grep -q "com.jpcottin.vulkanasteroids" && break; sleep 1; done || true
           sleep 4
           adb exec-out screencap -p > screenshot.png || true
@@ -741,7 +741,7 @@ jobs:
             if [ "$N" = "1" ]; then
               # The only launch in the whole job. The TITLE screen needs one tap
               # to start a round -- auto-play only pilots during PLAYING.
-              adb shell am start -n "$PKG/android.app.NativeActivity" || true
+              adb shell am start -n "$PKG/com.jpcottin.vulkanasteroids.GameActivity" || true
               for _ in $(seq 1 30); do
                 timeout 15 adb shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanasteroids" && break
                 sleep 1
@@ -965,7 +965,7 @@ jobs:
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           export PATH="$SDK/platform-tools:$PATH"
           PKG=com.jpcottin.vulkanasteroids
-          ACT=android.app.NativeActivity
+          ACT=com.jpcottin.vulkanasteroids.GameActivity
           APK=app/build/outputs/apk/debug/app-debug.apk
           WS="${{ github.workspace }}"
           mkdir -p "$WS/screenshots"
