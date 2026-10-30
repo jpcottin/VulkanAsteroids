@@ -216,6 +216,7 @@ public:
     float aiAimXForTest()          const { return aiAimX_; }
     void setScoreForTest(long s)         { score_ = s; }
     void clearInvulnForTest()            { invuln_ = 0.0f; }
+    bool parkedForTest()           const { return parked_; }
     bool isGameOverForTest()       const { return state_ == GAME_OVER; }
     bool isWinForTest()            const { return state_ == WIN; }
     void startLevelForTest(int level)    { startGame(); startLevel(level); }
@@ -276,6 +277,9 @@ private:
     // --- state ---
     State state_     = TITLE;
     State prevState_ = TITLE;
+    // The round was parked on Settings by onAppPause(), not by the gear:
+    // BACK then resumes it behind a breather (see update()).
+    bool  parked_    = false;
     float animTime_  = 0.0f;
     float stateTimer_ = 0.0f;
 

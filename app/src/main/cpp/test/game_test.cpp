@@ -1003,6 +1003,60 @@ TEST(AppPause, AHumanRoundParksOnSettings) {
     EXPECT_TRUE(g.isPlayingForTest());
 }
 
+// Back from a parked round the rock that was a frame from the ship is still
+// there: the round resumes behind the post-hit breather. The gear is the
+// player's own choice and grants none.
+TEST(AppPause, AParkedRoundResumesBehindTheBreather) {
+    Game g;
+    startPlaying(g);
+    runFor(g, 1.5f);                              // level-start grace used up
+    g.clearInvulnForTest();
+    g.onAppPause();
+    ASSERT_TRUE(g.parkedForTest());
+    g.onPointerDown(0, kSettingsCX, kBackPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.isPlayingForTest());
+    EXPECT_FALSE(g.parkedForTest());
+    EXPECT_GE(g.invulnForTest(), 1.4f);
+}
+
+TEST(AppPause, AGearPauseGrantsNoBreather) {
+    Game g;
+    startPlaying(g);
+    runFor(g, 1.5f);
+    g.clearInvulnForTest();
+    g.onPointerDown(0, kGearPX, kGearPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.inSettingsForTest());
+    EXPECT_FALSE(g.parkedForTest());
+    g.onPointerDown(0, kSettingsCX, kBackPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_TRUE(g.isPlayingForTest());
+    EXPECT_FLOAT_EQ(g.invulnForTest(), 0.0f);
+}
+
+TEST(AppPause, AParkedLevelClearStartsTheNextLevelAsUsual) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(3);
+    g.setDodgedForTest(g.goalForTest());
+    g.update(1.0f / 60.0f);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    g.onAppPause();
+    ASSERT_TRUE(g.inSettingsForTest());
+    g.onPointerDown(0, kSettingsCX, kBackPY);
+    g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_TRUE(g.isLevelClearForTest());
+    EXPECT_FALSE(g.parkedForTest());
+    runFor(g, 3.0f);                              // the next level's own grace applies
+    EXPECT_TRUE(g.isPlayingForTest());
+    EXPECT_EQ(g.levelForTest(), 4);
+}
+
 TEST(AppPause, AnAutoRunRoundKeepsPlaying) {
     Game g;
     startPlaying(g);

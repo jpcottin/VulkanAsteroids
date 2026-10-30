@@ -180,6 +180,7 @@ void Game::onAppPause() {
     if ((state_ == PLAYING || state_ == LEVEL_CLEAR) && !autoRunActive_) {
         prevState_ = state_;
         state_ = SETTINGS;
+        parked_ = true;
     }
 }
 
@@ -307,6 +308,7 @@ void Game::checkHighScore() {
 }
 
 void Game::startGame() {
+    parked_ = false;
     score_ = 0;
     lives_ = 5;
     newHighScore_     = false;
@@ -606,6 +608,14 @@ void Game::update(float dt) {
                 } else if (fabsf(wy - kSettingBackY) < kHitH && fabsf(wx) < 0.15f) {
                     onPointersCancel();
                     state_ = prevState_;
+                    // A round parked by the app going away (the shade, a
+                    // call, another pane) resumes with the rock that was a
+                    // frame from the ship still there and the player's eyes
+                    // and finger still on their way back: the usual post-hit
+                    // breather covers the switch. A gear pause gets none, or
+                    // the gear would be a free shield.
+                    if (parked_ && state_ == PLAYING) invuln_ = std::max(invuln_, 1.5f);
+                    parked_ = false;
                 }
             }
             break;
