@@ -45,7 +45,7 @@ Dodge and shoot asteroids across ten increasingly difficult levels.
 - **Lives:** 5 lives; invulnerability blinks after each hit, and after a shield save.
 - **HUD:** score (top-left) · lives (top-center) · level (top-right).
 - **Ship banking:** the ship tilts ±20° into the direction of travel.
-- **High scores:** top-5 leaderboard persisted locally; gold/silver/bronze podium on the title screen; gold pulsing score + rank medal on game over when a new record is set.
+- **High scores:** top-5 leaderboard persisted locally; gold/silver/bronze podium on the title screen; gold pulsing score + rank digit on game over for every new table entry (podium colours for the top three, the ship's cyan for a 4 or 5).
 - **Asteroid splitting:** large and medium asteroids split into two smaller faster children when shot.
 - **Asteroid variety:** fast (smaller, 1.65×, lateral drift, level 5+) and armored (2 HP, orange ring, level 7+) variants.
 - **Power-ups:** 🔵 Shield (absorbs one hit) · 🟢 Spread shot (3-way fire) · 🟡 Speed boost (1.65× speed) — drop from kills and fall from above; HUD timer bar shows remaining duration.
@@ -106,7 +106,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-96 tests covering ship physics, input zones, bullets, spread shot, speed
+97 tests covering ship physics, input zones, bullets, spread shot, speed
 boost, asteroid splitting, combo multiplier, armored asteroid HP, boss
 spawn, power-up session isolation, power-up pickup scoring, settings state
 machine (gear tap, back button, sound/auto-run toggles, row hit-bounds,
@@ -122,7 +122,8 @@ resumes behind, none for a gear pause, a parked level clear going on, auto-run
 not parked), which screens count as idle, and the high-score table
 (order, displacement and cap, the level kept with each run, a tie leaving the
 holder on top, a zero run never recorded, saved on game over and reloaded, and
-a file with a wrong magic, a truncated one or an oversized count left ignored).
+a file with a wrong magic, a truncated one or an oversized count left ignored,
+and the end-screen rank digit for an entry below the podium).
 Run on a connected device or emulator:
 
 ```bash
@@ -191,8 +192,8 @@ reports its findings without ever blocking a PR.
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
 | **Auto Run bench** | Builds `game.cpp` with the host compiler and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
-| **Native Tests** | Runs 96 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Host tests** | Builds `game.cpp` and the same 96 Google Test cases with the host compiler and runs them, no emulator | — |
+| **Native Tests** | Runs 97 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Host tests** | Builds `game.cpp` and the same 97 Google Test cases with the host compiler and runs them, no emulator | — |
 | **Smoke Test** | Launches the game on x86\_64 emulators and captures a `screencap` of it as the screenshot artifact, then runs the Android instrumented test, which asserts the activity is RESUMED and that a `UiAutomation` capture is not a black frame, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking preview legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*`; `instrumented-test-report-android-cli-experiment-*` on failure |
 | **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |

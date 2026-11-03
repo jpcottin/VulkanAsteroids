@@ -124,6 +124,7 @@ private:
     void emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
               float sx, float sy, float rot, float r, float g, float b, float a,
               float style = (float)STYLE_FLAT, float seed = 0.0f) const;
+    void drawRankDigit(std::vector<DrawCmd>& out, float pulse) const;
     void drawDigit(std::vector<DrawCmd>& out, int d, float cx, float cy,
                    float h, float r, float g, float b, float a) const;
     void drawNumber(std::vector<DrawCmd>& out, long value, float leftX, float cy,
