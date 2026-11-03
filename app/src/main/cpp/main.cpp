@@ -80,10 +80,14 @@ struct Engine {
     // The game only simulates while the activity is resumed AND has window
     // focus: a paused activity or one covered by the notification shade / a
     // system dialog keeps its surface, so "surface exists" is not enough.
+    // Frames, though, are presented for as long as the activity is resumed:
+    // a window that lost focus to the shade or a system dialog is still on
+    // screen, and one that never had focus (a dialog already up when it
+    // opened) must not stay black until the dialog goes.
     bool resumed = false;
     bool focused = false;
-    // Present one more frame after going inactive so the pause overlay the
-    // game switched to is what stays on screen, not the last live frame.
+    // Present one more frame after a pause so the pause overlay the game
+    // switched to is what stays on screen, not the last live frame.
     bool frameOnPause = false;
     double lastTime = 0.0;
 
@@ -228,11 +232,12 @@ void android_main(android_app* app) {
         int events;
         android_poll_source* source;
         // Block on the looper while there is nothing to draw or the activity
-        // is paused / unfocused; otherwise drain events and render a frame.
+        // is paused; otherwise drain events and render a frame (the simulation
+        // itself only advances with window focus, see below).
         // A renderer that lost its swapchain (or device) while the window is
         // still up is retried on a timer rather than waiting for a window
         // event that may never come (split-screen resizes send none).
-        bool running   = engine.renderer.ready() && (engine.active() || engine.frameOnPause);
+        bool running   = engine.renderer.ready() && (engine.resumed || engine.frameOnPause);
         bool recovering = engine.active() && engine.renderer.needsRecovery();
         int timeout = running ? 0 : (recovering ? 250 : -1);
         while (ALooper_pollOnce(timeout, nullptr, &events, (void**)&source) >= 0) {
@@ -260,12 +265,13 @@ void android_main(android_app* app) {
             }
         }
 
-        if (engine.renderer.ready() && (engine.active() || engine.frameOnPause)) {
+        if (engine.renderer.ready() && (engine.resumed || engine.frameOnPause)) {
             double now = now_s();
             float dt = (float)(now - engine.lastTime);
             engine.lastTime = now;
 
             engine.game.setViewport(engine.renderer.width(), engine.renderer.height());
+            // Unfocused: the round stays parked, the frame still goes out.
             if (engine.active()) engine.game.update(dt);
             engine.frameOnPause = false;
 
