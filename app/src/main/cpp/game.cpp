@@ -188,6 +188,16 @@ void Game::onAppPause() {
 
 static const uint32_t kHsMagic = 0x41535452u; // "ASTR"
 
+// High-score podium colours (gold/silver/bronze), shared by the title table
+// and the rank digit on the game-over/win screens. A rank below the podium
+// takes the ship's body cyan instead.
+static const float kShipCol[3] = {0.28f, 0.72f, 0.92f};
+static const float kPodiumCol[3][3] = {
+    {1.00f, 0.85f, 0.20f},   // gold
+    {0.78f, 0.82f, 0.92f},   // silver
+    {0.72f, 0.47f, 0.22f},   // bronze
+};
+
 void Game::setDataPath(const char* path) {
     if (!path || path[0] == '\0') return;
     snprintf(dataPath_,    sizeof(dataPath_),    "%s/highscores.bin", path);
@@ -916,6 +926,17 @@ void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
     out.push_back(d);
 }
 
+// Rank digit above the end-screen score for every new table entry: podium
+// colours for the top three, the ship's cyan for a 4 or 5. The score already
+// pulses gold for those ranks, so a missing digit read as a glitch.
+void Game::drawRankDigit(std::vector<DrawCmd>& out, float pulse) const {
+    if (!newHighScore_ || newHighScoreRank_ < 0 || newHighScoreRank_ >= kMaxScores) return;
+    int ri = newHighScoreRank_;
+    float r = kShipCol[0], g = kShipCol[1], b = kShipCol[2];
+    if (ri < 3) { r = kPodiumCol[ri][0]; g = kPodiumCol[ri][1]; b = kPodiumCol[ri][2]; }
+    drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f, r, g, b, 0.65f + 0.35f * pulse);
+}
+
 void Game::drawDigit(std::vector<DrawCmd>& out, int dgt, float cx, float cy,
                      float h, float r, float g, float b, float a) const {
     if (dgt < 0 || dgt > 9) return;
@@ -1561,13 +1582,10 @@ void Game::render(std::vector<DrawCmd>& out) {
              0.88f, 0.97f, 1.00f, 1.0f);
 
         // High score podium (top 3, gold/silver/bronze)
-        static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
-        static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
-        static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
         const float hh = 0.052f, rowY[3] = {0.13f, 0.25f, 0.37f};
         for (int i = 0; i < 3; i++) {
             if (highScores_[i].score <= 0) break;
-            float pr = kPodR[i], pg = kPodG[i], pb = kPodB[i];
+            float pr = kPodiumCol[i][0], pg = kPodiumCol[i][1], pb = kPodiumCol[i][2];
             // Rank ship icon
             emit(out, SHAPE_SHIP_WINGS, -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr*0.5f, pg*0.5f, pb*0.5f, 1.0f);
             emit(out, SHAPE_SHIP_BODY,  -asp_*0.72f, rowY[i], 0.020f, 0.020f, 0.0f, pr,      pg,      pb,      1.0f);
@@ -1595,15 +1613,7 @@ void Game::render(std::vector<DrawCmd>& out) {
         // Gold pulsing score if new high score, white otherwise
         float sr = 1.0f, sg = newHighScore_ ? (0.75f + 0.20f*pulse) : 1.0f, sb = newHighScore_ ? 0.10f : 1.0f;
         drawNumber(out, score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
-        // Rank digit above score when it's a new high score
-        if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
-            static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
-            static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
-            static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
-            int ri = newHighScoreRank_;
-            drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
-                      kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
-        }
+        drawRankDigit(out, pulse);
         emit(out, SHAPE_SHIP_WINGS, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
              0.22f, 0.42f, 0.65f, 0.3f + 0.6f * pulse);
         emit(out, SHAPE_SHIP_BODY,  0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
@@ -1616,14 +1626,7 @@ void Game::render(std::vector<DrawCmd>& out) {
         float firstCx = -(float)(n - 1) * fw * 0.5f;
         float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
         drawNumber(out, score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
-        if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
-            static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
-            static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
-            static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
-            int ri = newHighScoreRank_;
-            drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
-                      kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
-        }
+        drawRankDigit(out, pulse);
         emit(out, SHAPE_SHIP_WINGS, 0.0f, 0.5f, 0.05f, 0.05f, 0.0f,
              0.22f, 0.42f, 0.65f, 0.3f + 0.6f * pulse);
         emit(out, SHAPE_SHIP_BODY,  0.0f, 0.5f, 0.05f, 0.05f, 0.0f,

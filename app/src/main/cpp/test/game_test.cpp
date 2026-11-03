@@ -1357,6 +1357,29 @@ TEST(HighScores, SavedOnGameOverAndReloaded) {
     }
     removeScratch(dir);
 }
+// A run that lands below the podium is still a new table entry: the score
+// pulses gold, so the rank digit above it must be there too, in the ship's
+// cyan rather than a podium colour. Digit 4 is four segment quads.
+TEST(HighScores, EndScreenNamesARankBelowThePodium) {
+    Game g;
+    g.setViewport(kW, kH);
+    const long runs[4] = {3000, 2000, 1000, 500};      // a podium, then a fourth place
+    for (long r : runs) endRunWith(g, r);
+    ASSERT_EQ(g.newHighScoreRankForTest(), 3);
+    for (int i = 0; i < 60; i++) g.update(1.0f / 60.0f);   // shake settled: ty is the layout y
+
+    std::vector<DrawCmd> cmds;
+    g.render(cmds);
+    int cyanSegments = 0;
+    for (const auto& c : cmds) {
+        if (c.shape != SHAPE_QUAD) continue;
+        if (fabsf(c.color[0] - 0.28f) > 0.01f || fabsf(c.color[1] - 0.72f) > 0.01f ||
+            fabsf(c.color[2] - 0.92f) > 0.01f) continue;
+        if (fabsf(c.ty + 0.42f) > 0.08f) continue;    // the digit sits above the score
+        cyanSegments++;
+    }
+    EXPECT_EQ(cyanSegments, 4) << "rank 4 digit missing from the end screen";
+}
 
 // The loader must ignore a file it cannot trust and keep the in-memory table.
 // On disk: uint32 magic "ASTR", uint32 count, then kMaxScores x {int64 score, int32 level, pad}.
