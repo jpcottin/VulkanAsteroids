@@ -212,11 +212,13 @@ void Game::loadHighScores() {
     if (!f) return;
     struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
     if (fread(&buf, sizeof(buf), 1, f) == 1 && buf.magic == kHsMagic) {
+        // Rows go through the same gate as a new score: a damaged row (a
+        // level the game does not have, a score below 1) is dropped instead
+        // of being shown and written back on the next save, and rows that
+        // arrive out of order land at their rank.
+        for (auto& hs : highScores_) hs = {};
         int n = (int)buf.count < kMaxScores ? (int)buf.count : kMaxScores;
-        for (int i = 0; i < n; i++) {
-            highScores_[i].score = (long)buf.e[i].score;
-            highScores_[i].level = buf.e[i].level;
-        }
+        for (int i = 0; i < n; i++) mergeHighScore((long)buf.e[i].score, buf.e[i].level);
     }
     fclose(f);
 }
@@ -303,15 +305,23 @@ void Game::spawnDebris(float ax, float ay, float ar, float cr, float cg, float c
     }
 }
 
-void Game::checkHighScore() {
-    if (score_ <= 0) return;
+// Slots a run into the table at its rank; -1 when it does not make the table
+// or is not a run the game can produce (no score, a level outside 1..10).
+int Game::mergeHighScore(long score, int level) {
+    if (score <= 0 || level < kMinLevel || level > kMaxLevel) return -1;
     int pos = kMaxScores;
     for (int i = 0; i < kMaxScores; i++) {
-        if (score_ > highScores_[i].score) { pos = i; break; }
+        if (score > highScores_[i].score) { pos = i; break; }
     }
-    if (pos == kMaxScores) return;
+    if (pos == kMaxScores) return -1;
     for (int i = kMaxScores - 1; i > pos; i--) highScores_[i] = highScores_[i - 1];
-    highScores_[pos] = {score_, level_};
+    highScores_[pos] = {score, level};
+    return pos;
+}
+
+void Game::checkHighScore() {
+    int pos = mergeHighScore(score_, level_);
+    if (pos < 0) return;
     newHighScore_     = true;
     newHighScoreRank_ = pos;
     saveHighScores();

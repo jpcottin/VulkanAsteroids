@@ -1434,3 +1434,46 @@ TEST(HighScores, OversizedCountIsClampedToTheTable) {
     }
     removeScratch(dir);
 }
+
+// Writes a full record with the right magic from parallel score/level arrays.
+static void writeTable(const std::string& dir, const int64_t* scores, const int32_t* levels) {
+    unsigned char buf[kFileSize] = {};
+    uint32_t count = Game::kMaxScoresForTest;
+    memcpy(buf, &kFileMagic, 4); memcpy(buf + 4, &count, 4);
+    for (int i = 0; i < Game::kMaxScoresForTest; i++) {
+        memcpy(buf + 8 + kFileEntry * i, &scores[i], 8); memcpy(buf + 16 + kFileEntry * i, &levels[i], 4);
+    }
+    writeBytes(dir + "/highscores.bin", buf, sizeof(buf));
+}
+
+TEST(HighScores, RowsWithALevelOutsideTheGameAreDropped) {
+    std::string dir = scratchDir();
+    if (dir.empty()) GTEST_SKIP() << "cannot create temp dir";
+    // Levels 0, 11 and -5 do not exist: those rows are damage, not records.
+    const int64_t scores[5] = {500, 400, 300, 200, 100};
+    const int32_t levels[5] = {1, 0, 11, 3, -5};
+    writeTable(dir, scores, levels);
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir.c_str());
+    EXPECT_EQ(g.highScoreForTest(0), 500); EXPECT_EQ(g.highScoreLevelForTest(0), 1);
+    EXPECT_EQ(g.highScoreForTest(1), 200); EXPECT_EQ(g.highScoreLevelForTest(1), 3);
+    for (int i = 2; i < Game::kMaxScoresForTest; i++) EXPECT_EQ(g.highScoreForTest(i), 0) << "entry " << i;
+    removeScratch(dir);
+}
+
+TEST(HighScores, RowsWithANegativeScoreAreDroppedAndTheRestOrdered) {
+    std::string dir = scratchDir();
+    if (dir.empty()) GTEST_SKIP() << "cannot create temp dir";
+    // Out of order, one negative, one zero: the table ranks what is left.
+    const int64_t scores[5] = {100, 300, -50, 200, 0};
+    const int32_t levels[5] = {2, 4, 2, 3, 1};
+    writeTable(dir, scores, levels);
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir.c_str());
+    EXPECT_EQ(g.highScoreForTest(0), 300); EXPECT_EQ(g.highScoreLevelForTest(0), 4);
+    EXPECT_EQ(g.highScoreForTest(1), 200); EXPECT_EQ(g.highScoreLevelForTest(1), 3);
+    EXPECT_EQ(g.highScoreForTest(2), 100); EXPECT_EQ(g.highScoreLevelForTest(2), 2);
+    EXPECT_EQ(g.highScoreForTest(3), 0);
+    EXPECT_EQ(g.highScoreForTest(4), 0);
+    removeScratch(dir);
+}

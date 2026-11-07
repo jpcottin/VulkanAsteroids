@@ -116,6 +116,7 @@ private:
     void clampShipX();
     void loadHighScores();
     void saveHighScores();
+    int  mergeHighScore(long score, int level);
     void checkHighScore();
     void spawnDebris(float x, float y, float r, float cr, float cg, float cb);
 
