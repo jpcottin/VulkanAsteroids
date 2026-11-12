@@ -903,6 +903,72 @@ TEST(Render, EndScreenScoreFitsTheScreen) {
     }
 }
 
+// Horizontal extents (NDC) of the three HUD groups on the top line: the
+// white score, the ship icons and the yellow level number.
+static void hudExtents(const std::vector<DrawCmd>& cmds, float& scoreRight,
+                       float& livesLeft, float& livesRight, float& livesMid,
+                       float& levelLeft) {
+    scoreRight = -2.0f; livesLeft = 2.0f; livesRight = -2.0f; levelLeft = 2.0f;
+    float sum = 0.0f; int ships = 0;
+    for (const auto& c : cmds) {
+        if (fabsf(c.ty + 0.90f) > 0.06f) continue;          // the HUD row
+        if (c.shape == SHAPE_QUAD) {
+            float right = c.tx + fabsf(c.mtx[0]), left = c.tx - fabsf(c.mtx[0]);
+            bool white  = c.color[0] > 0.99f && c.color[1] > 0.99f && c.color[2] > 0.99f;
+            // the level's yellow has a touch of blue; a full boss bar has none
+            bool yellow = c.color[0] > 0.99f && fabsf(c.color[1] - 0.85f) < 0.01f &&
+                          fabsf(c.color[2] - 0.20f) < 0.01f;
+            if (white  && right > scoreRight) scoreRight = right;
+            if (yellow && left  < levelLeft)  levelLeft  = left;
+        } else if (c.shape == SHAPE_SHIP_WINGS) {           // wing tips at x = ±1
+            float left = c.tx - fabsf(c.mtx[0]), right = c.tx + fabsf(c.mtx[0]);
+            if (left  < livesLeft)  livesLeft  = left;
+            if (right > livesRight) livesRight = right;
+            sum += c.tx; ships++;
+        }
+    }
+    livesMid = ships ? sum / (float)ships : 0.0f;
+}
+
+// The score grows at a fixed glyph size while the lives sit in the middle of
+// the top line: on a portrait phone a four-digit score already touched the
+// first ship icon and a fifth digit drew over it. The lives step aside for
+// the score with a clear gap, stay short of the level number, and keep
+// centred while there is room for that gap (a two-digit score on a phone).
+TEST(Render, TheLivesStayClearOfAFiveDigitScore) {
+    Game g;
+    startPlaying(g);
+    std::vector<DrawCmd> cmds;
+    float scoreRight, livesLeft, livesRight, livesMid, levelLeft;
+
+    g.setScoreForTest(60);                         // two digits: room to centre
+    g.render(cmds);
+    hudExtents(cmds, scoreRight, livesLeft, livesRight, livesMid, levelLeft);
+    EXPECT_NEAR(livesMid, 0.0f, 0.001f);
+    EXPECT_LT(scoreRight, livesLeft);
+
+    g.setScoreForTest(630);                        // three digits: a gap, not a touch
+    cmds.clear();
+    g.render(cmds);
+    hudExtents(cmds, scoreRight, livesLeft, livesRight, livesMid, levelLeft);
+    EXPECT_LT(scoreRight + 0.04f, livesLeft);      // 0.03 world of clearance
+
+    g.setScoreForTest(12345);                      // five digits
+    cmds.clear();
+    g.render(cmds);
+    hudExtents(cmds, scoreRight, livesLeft, livesRight, livesMid, levelLeft);
+    EXPECT_LT(scoreRight, livesLeft) << "a five-digit score runs into the lives";
+    EXPECT_LT(livesRight, levelLeft);
+
+    g.startLevelForTest(10);                       // two-digit level too
+    g.setScoreForTest(98765);
+    cmds.clear();
+    g.render(cmds);
+    hudExtents(cmds, scoreRight, livesLeft, livesRight, livesMid, levelLeft);
+    EXPECT_LT(scoreRight, livesLeft);
+    EXPECT_LT(livesRight, levelLeft) << "the lives run into the level number";
+}
+
 // ── Ship hits ─────────────────────────────────────────────────────────────────
 
 TEST(ShipHit, TwoRocksInOneFrameSpendTheShieldAndNothingElse) {
