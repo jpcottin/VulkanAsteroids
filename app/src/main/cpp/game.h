@@ -197,6 +197,7 @@ public:
         asteroids_.push_back(a);
     }
     // type: -1 keeps the random pick, else PowerUpType (0 shield, 1 spread, 2 speed).
+    int  powerUpCountForTest()     const { return (int)powerUps_.size(); }
     void spawnTestPowerUp(float x, float y, int type = -1) {
         spawnPowerUp(x, y);
         if (type >= 0) powerUps_.back().type = (PowerUpType)type;

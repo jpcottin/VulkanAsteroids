@@ -548,6 +548,22 @@ TEST(GameOver, ReturningToTheTitleClearsTheRound) {
     EXPECT_FLOAT_EQ(g.invulnForTest(), 0.0f);  // the title ship would blink forever
 }
 
+TEST(GameOver, TheEndScreenClearsWhatWasInFlight) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, kFireX, kFireY); g.update(0.016f); g.onPointerUp(0);   // a bolt in flight
+    ASSERT_GT(g.bulletCount(), 0);
+    g.spawnTestPowerUp(0.3f, -0.5f, 0);
+    ASSERT_EQ(g.powerUpCountForTest(), 1);
+    g.setLivesForTest(1);
+    g.clearInvulnForTest();
+    g.spawnTestAsteroid(g.shipX(), g.shipY(), 0.06f, 2);                     // fatal contact
+    g.update(0.016f);
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(g.bulletCount(), 0);           // nothing updates them there
+    EXPECT_EQ(g.powerUpCountForTest(), 0);
+}
+
 // ── Power-up session isolation ─────────────────────────────────────────────────
 
 TEST(PowerUp, NotCarriedToNewGame) {

@@ -566,6 +566,14 @@ void Game::update(float dt) {
             if (state_ == PLAYING) updateBullets(dt);
             removeDeadEntities();
             checkLevelClear();
+            // The round just ended (fatal hit or the boss down): nothing
+            // updates bolts or power-ups on the end screen, so they would be
+            // drawn frozen in mid-air. Cleared here, never inside the loops
+            // that found the ending.
+            if (state_ == GAME_OVER || state_ == WIN) {
+                bullets_.clear();
+                powerUps_.clear();
+            }
             break;
         }
         case LEVEL_CLEAR: {
