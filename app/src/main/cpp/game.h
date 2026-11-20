@@ -196,6 +196,11 @@ public:
         a.gen = gen; a.hp = hp; a.type = type; a.alive = true;
         asteroids_.push_back(a);
     }
+    int  armoredCountForTest() const {
+        int n = 0;
+        for (auto& a : asteroids_) if (a.alive && a.type == AT_ARMORED) n++;
+        return n;
+    }
     // type: -1 keeps the random pick, else PowerUpType (0 shield, 1 spread, 2 speed).
     int  powerUpCountForTest()     const { return (int)powerUps_.size(); }
     void spawnTestPowerUp(float x, float y, int type = -1) {

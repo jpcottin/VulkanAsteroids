@@ -415,6 +415,35 @@ TEST(ArmoredAsteroid, TakesTwoHitsToDestroy) {
     EXPECT_EQ(g.asteroidCount(), 0);
 }
 
+TEST(ArmoredAsteroid, TheFirstHitScoresNothingAndTheKillSplitsIntoPlainRocks) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestAsteroid(0.0f, 0.55f, 0.10f, 0, Game::AT_ARMORED, 2);
+    long before = g.score();
+
+    // The dent: the rock stays, and nothing is scored, killed or chained yet.
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    ASSERT_EQ(g.asteroidCount(), 1);
+    EXPECT_EQ(g.score(), before);
+    EXPECT_EQ(g.killsForTest(), 0);
+    EXPECT_EQ(g.combo(), 0);
+
+    for (int i = 0; i < 16; i++) g.update(0.016f);   // fire cooldown
+
+    // The kill: one kill, scored once, and the two pieces are plain one-hit rocks
+    // (an orange ring on a piece would promise a second hit it does not need).
+    g.onPointerDown(0, kFireX, kFireY);
+    for (int i = 0; i < 5; i++) g.update(0.016f);
+    g.onPointerUp(0);
+    EXPECT_EQ(g.killsForTest(), 1);
+    EXPECT_EQ(g.combo(), 1);
+    EXPECT_GT(g.score(), before);
+    EXPECT_EQ(g.asteroidCount(), 2);
+    EXPECT_EQ(g.armoredCountForTest(), 0);
+}
+
 // ── Boss ──────────────────────────────────────────────────────────────────────
 
 TEST(Boss, SpawnsAtLevel10Only) {
