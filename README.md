@@ -196,8 +196,8 @@ reports its findings without ever blocking a PR.
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
 | **Auto Run bench** | Builds `game.cpp` with the host compiler and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
-| **Native Tests** | Runs 101 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Host tests** | Builds `game.cpp` and the same 101 Google Test cases with the host compiler and runs them, no emulator | — |
+| **Native Tests** | Runs the Google Test suite ([Native unit tests](#native-unit-tests-google-test)) on x86\_64 emulators (API 34 + API 36) | — |
+| **Host tests** | Builds `game.cpp` and the same Google Test suite with the host compiler and runs them, no emulator | — |
 | **Smoke Test** | Launches the game on x86\_64 emulators and captures a `screencap` of it as the screenshot artifact, then runs the Android instrumented test, which asserts the activity is RESUMED and that a `UiAutomation` capture is not a black frame, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking preview legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*`; `instrumented-test-report-android-cli-experiment-*` on failure |
 | **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |
