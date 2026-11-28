@@ -106,10 +106,10 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-102 tests covering ship physics, input zones, bullets, spread shot, speed
+103 tests covering ship physics, input zones, bullets, spread shot, speed
 boost, asteroid splitting, combo multiplier, armored asteroid HP (a dent scores
 nothing, the pieces are plain rocks), boss
-spawn, power-up session isolation, power-up pickup scoring, settings state
+spawn, dodge scoring (only a rock leaving the bottom counts), power-up session isolation, power-up pickup scoring, settings state
 machine (gear tap, back button, sound/auto-run toggles, row hit-bounds,
 persistence, multi-touch tap race), auto-run AI (fire alignment, lateral
 steering, power-up interception, declining blocked power-ups, holding fire on
