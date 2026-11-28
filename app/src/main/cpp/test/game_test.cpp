@@ -1067,6 +1067,25 @@ TEST(ShipHit, TheLastLifeEndsTheGame) {
 
 // ── Level clear ───────────────────────────────────────────────────────────────
 
+// A rock that falls out of the bottom was dodged: 5 x level, and it counts toward
+// the level's goal. One that drifts off a side was not, and pays nothing.
+TEST(LevelClear, OnlyARockLeavingTheBottomIsADodge) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(3);
+    g.setDodgedForTest(g.goalForTest() - 1);
+    long score = g.scoreForTest();
+    g.spawnTestAsteroid(0.50f, 0.0f, 0.02f, 2);     // already past the right edge
+    g.update(1.0f / 60.0f);
+    EXPECT_EQ(g.scoreForTest(), score);
+    EXPECT_TRUE(g.isPlayingForTest()) << "a side exit counted toward the goal";
+
+    g.spawnTestAsteroid(0.0f, 1.08f, 0.02f, 2);     // falls out of the bottom
+    g.update(1.0f / 60.0f);
+    EXPECT_TRUE(g.isLevelClearForTest());           // the last dodge the goal needed
+    EXPECT_EQ(g.scoreForTest(), score + 5 * 3 + 100 * 3);
+}
+
 TEST(LevelClear, DodgingTheGoalClearsTheLevelAndPaysTheBonus) {
     Game g;
     g.setViewport(kW, kH);
